@@ -138,7 +138,7 @@ final class ConversationStore {
             guard info.chatId == activeChatId else { return }
             if let index = messages.firstIndex(where: { $0.id == info.messageId }) {
                 messages[index].editDate = info.editDate > 0
-                    ? Date(timeIntervalSince1970: TimeInterval(info.editDate))
+                    ? Foundation.Date(timeIntervalSince1970: TimeInterval(info.editDate))
                     : nil
             }
 

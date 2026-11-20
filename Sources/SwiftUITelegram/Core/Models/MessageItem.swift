@@ -109,8 +109,8 @@ enum MessageDisplayContent: Equatable, Hashable, Sendable {
 struct MessageItem: Identifiable, Equatable, Hashable, Sendable {
     let id: Int64
     let chatId: Int64
-    let date: Date
-    var editDate: Date?
+    let date: Foundation.Date
+    var editDate: Foundation.Date?
     let isOutgoing: Bool
     let sender: MessageSenderKind
     var content: MessageDisplayContent
@@ -119,8 +119,8 @@ struct MessageItem: Identifiable, Equatable, Hashable, Sendable {
     init(
         id: Int64,
         chatId: Int64,
-        date: Date,
-        editDate: Date? = nil,
+        date: Foundation.Date,
+        editDate: Foundation.Date? = nil,
         isOutgoing: Bool,
         sender: MessageSenderKind,
         content: MessageDisplayContent,
@@ -139,8 +139,8 @@ struct MessageItem: Identifiable, Equatable, Hashable, Sendable {
     init(tdMessage: Message) {
         self.id = tdMessage.id
         self.chatId = tdMessage.chatId
-        self.date = Date(timeIntervalSince1970: TimeInterval(tdMessage.date))
-        self.editDate = tdMessage.editDate > 0 ? Date(timeIntervalSince1970: TimeInterval(tdMessage.editDate)) : nil
+        self.date = Foundation.Date(timeIntervalSince1970: TimeInterval(tdMessage.date))
+        self.editDate = tdMessage.editDate > 0 ? Foundation.Date(timeIntervalSince1970: TimeInterval(tdMessage.editDate)) : nil
         self.isOutgoing = tdMessage.isOutgoing
         self.sender = MessageSenderKind(from: tdMessage.senderId)
         self.content = MessageDisplayContent(from: tdMessage.content)

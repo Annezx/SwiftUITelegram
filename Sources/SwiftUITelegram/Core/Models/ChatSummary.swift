@@ -171,7 +171,7 @@ struct ChatSummary: Identifiable, Equatable, Hashable, Sendable {
         lastMessage?.previewText ?? "暂无消息"
     }
 
-    var lastMessageDate: Date? {
+    var lastMessageDate: Foundation.Date? {
         lastMessage?.date
     }
 
@@ -221,7 +221,7 @@ struct UserSummary: Identifiable, Equatable, Hashable, Sendable {
         case .userStatusOnline:
             self.statusText = "在线"
         case .userStatusOffline(let info):
-            let date = Date(timeIntervalSince1970: TimeInterval(info.wasOnline))
+            let date = Foundation.Date(timeIntervalSince1970: TimeInterval(info.wasOnline))
             let formatter = RelativeDateTimeFormatter()
             formatter.unitsStyle = .short
             self.statusText = "上次在线 \(formatter.localizedString(for: date, relativeTo: .now))"
