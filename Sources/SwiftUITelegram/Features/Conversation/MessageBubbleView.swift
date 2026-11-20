@@ -52,7 +52,10 @@ struct MessageBubbleView: View {
             .background(bubbleBackground, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(message.isOutgoing ? .clear : .separator.opacity(0.35), lineWidth: 0.5)
+                    .strokeBorder(
+                        message.isOutgoing ? Color.clear : Color(nsColor: .separatorColor).opacity(0.45),
+                        lineWidth: 0.5
+                    )
             )
             .frame(maxWidth: 520, alignment: message.isOutgoing ? .trailing : .leading)
             .contextMenu {
