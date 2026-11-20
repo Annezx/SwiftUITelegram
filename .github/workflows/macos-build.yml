@@ -1,0 +1,43 @@
+name: macOS Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 16
+        run: |
+          XCODE_APP=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -n 1 || true)
+          if [ -n "$XCODE_APP" ]; then
+            sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          fi
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Prepare placeholder Secrets.xcconfig
+        run: cp Config/Secrets.xcconfig.example Config/Secrets.xcconfig
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build SwiftUITelegram (Debug, no signing)
+        run: |
+          xcodebuild \
+            -project SwiftUITelegram.xcodeproj \
+            -scheme SwiftUITelegram \
+            -configuration Debug \
+            -destination "platform=macOS" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
