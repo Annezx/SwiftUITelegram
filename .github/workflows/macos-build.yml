@@ -6,21 +6,20 @@ on:
   pull_request:
     branches: [ main ]
 
+concurrency:
+  group: macos-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Select Xcode 16
-        run: |
-          XCODE_APP=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -n 1 || true)
-          if [ -n "$XCODE_APP" ]; then
-            sudo xcode-select -s "$XCODE_APP/Contents/Developer"
-          fi
-          xcodebuild -version
+      - name: Show Xcode version
+        run: xcodebuild -version
 
       - name: Install XcodeGen
         run: brew install xcodegen
