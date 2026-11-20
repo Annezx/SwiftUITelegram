@@ -17,7 +17,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Show Xcode version
         run: xcodebuild -version
@@ -31,13 +31,46 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Build SwiftUITelegram (Debug, no signing)
+      - name: Build SwiftUITelegram (Release, x86_64)
         run: |
           xcodebuild \
             -project SwiftUITelegram.xcodeproj \
             -scheme SwiftUITelegram \
-            -configuration Debug \
-            -destination "platform=macOS" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
+            -configuration Release \
+            -destination "platform=macOS,arch=x86_64" \
+            -derivedDataPath build/DerivedData \
+            ARCHS=x86_64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            ENABLE_HARDENED_RUNTIME=NO \
             build
+
+      - name: Ad-hoc sign, verify, and package .app
+        run: |
+          APP_PATH="build/DerivedData/Build/Products/Release/SwiftUITelegram.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "Expected app bundle not found at $APP_PATH"
+            ls -la build/DerivedData/Build/Products/Release || true
+            exit 1
+          fi
+
+          if [ -d "$APP_PATH/Contents/Frameworks" ]; then
+            find "$APP_PATH/Contents/Frameworks" -maxdepth 2 \( -name "*.framework" -o -name "*.dylib" \) -print0 | \
+              xargs -0 -I{} codesign --force --sign - "{}"
+          fi
+          codesign --force --sign - --entitlements Config/SwiftUITelegram.entitlements "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "dist/SwiftUITelegram-macOS-x86_64.zip"
+          ls -lh "dist/SwiftUITelegram-macOS-x86_64.zip"
+
+      - name: Upload .app artifact
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/SwiftUITelegram-macOS-x86_64.zip
+          archive: false
+          if-no-files-found: error
+          retention-days: 30

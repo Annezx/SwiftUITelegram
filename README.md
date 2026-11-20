@@ -56,6 +56,17 @@ TELEGRAM_API_HASH = your_32_char_api_hash
 
 无需安装 XcodeGen，直接用 Xcode 16 打开仓库根目录下的 `Package.swift`，选择 `SwiftUITelegram` Scheme 并按下 `⌘R` 即可运行。
 
+### 方式三：直接下载 GitHub Actions 自动打包的 `.app`
+
+每次推送到 `main` 分支后，GitHub Actions（`macos-15-intel`）会自动构建 Release 版 `SwiftUITelegram.app` 并上传为构建产物 `SwiftUITelegram-macOS-x86_64.zip`。
+
+下载并解压后，由于 CI 产物采用 Ad-hoc 签名（未经过 Apple 公证），首次启动前需移除 macOS 隔离属性：
+
+```bash
+xattr -dr com.apple.quarantine SwiftUITelegram.app
+open SwiftUITelegram.app
+```
+
 ---
 
 ## 目录结构
