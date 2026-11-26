@@ -28,6 +28,8 @@
 	<string>Copyright © 2026 SwiftUITelegram.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>SwiftUITelegram 需要访问麦克风以录制并发送语音消息。</string>
 	<key>TELEGRAM_API_ID</key>
 	<string>$(TELEGRAM_API_ID)</string>
 	<key>TELEGRAM_API_HASH</key>

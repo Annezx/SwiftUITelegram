@@ -17,7 +17,7 @@ struct SettingsView: View {
                     Label("API 与存储", systemImage: "externaldrive")
                 }
         }
-        .frame(width: 460, height: 280)
+        .frame(width: 480, height: 330)
         .padding()
         .confirmationDialog(
             "确定要退出当前 Telegram 账号吗？",
@@ -84,6 +84,19 @@ struct SettingsView: View {
             LabeledContent("TDLib 数据库目录") {
                 Button("在 Finder 中显示") {
                     NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: AppConfiguration.tdlibDatabaseDirectory)
+                }
+            }
+
+            LabeledContent("TDLib 媒体文件目录") {
+                Button("在 Finder 中显示") {
+                    NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: AppConfiguration.tdlibFilesDirectory)
+                }
+            }
+
+            LabeledContent("临时媒体缓存") {
+                Button("清理预览与转码缓存") {
+                    appStore.audioPlayer.stop()
+                    AppConfiguration.clearMediaCache()
                 }
             }
 
