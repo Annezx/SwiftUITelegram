@@ -110,38 +110,12 @@ struct MessageComposerView: View {
 
     private var inputRow: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            Menu {
-                Button {
-                    onPickMedia()
-                } label: {
-                    Label("选择图片 / 视频 / 音频…", systemImage: "photo.on.rectangle.angled")
-                }
-
-                Button {
-                    onPickDocuments()
-                } label: {
-                    Label("选择原文件…", systemImage: "doc")
-                }
-
-                Divider()
-
-                Button {
-                    onPasteClipboardImage()
-                } label: {
-                    Label("粘贴剪贴板图片或文件", systemImage: "doc.on.clipboard")
-                }
-            } label: {
-                Image(systemName: "paperclip.circle.fill")
-                    .font(.system(size: 26))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 32, height: 32)
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .frame(width: LayoutMetrics.composerControlHeight, height: LayoutMetrics.composerControlHeight)
-            .disabled(isSending)
-            .help("发送图片、视频、音频或文件（也支持直接拖拽或 ⌘V 粘贴图片）")
+            AttachmentMenuButton(
+                isDisabled: isSending,
+                onPickMedia: onPickMedia,
+                onPickDocuments: onPickDocuments,
+                onPasteClipboardImage: onPasteClipboardImage
+            )
 
             TextField(
                 pendingAttachments.isEmpty
@@ -278,6 +252,116 @@ struct MessageComposerView: View {
         .frame(maxWidth: .infinity, alignment: .trailing)
         .frame(height: 20)
         .animation(.linear(duration: 0.06), value: recorder.liveLevels.count)
+    }
+}
+
+/// Renders the attachment button as a plain SwiftUI Button so `paperclip.circle.fill`
+/// keeps its exact 26pt size (matching the trailing mic/send button), while presenting
+/// a native AppKit `NSMenu` on click instead of `SwiftUI.Menu`'s macOS `NSPopUpButton`
+/// which shrinks SF Symbol labels to default control size.
+private struct AttachmentMenuButton: View {
+    let isDisabled: Bool
+    let onPickMedia: () -> Void
+    let onPickDocuments: () -> Void
+    let onPasteClipboardImage: () -> Void
+
+    @State private var anchorBox = AttachmentMenuAnchorBox()
+
+    var body: some View {
+        Button {
+            presentMenu()
+        } label: {
+            Image(systemName: "paperclip.circle.fill")
+                .font(.system(size: 26))
+                .foregroundStyle(.secondary)
+                .frame(width: LayoutMetrics.composerControlHeight, height: LayoutMetrics.composerControlHeight)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .background(AttachmentMenuAnchorView(box: anchorBox))
+        .disabled(isDisabled)
+        .help("发送图片、视频、音频或文件（也支持直接拖拽或 ⌘V 粘贴图片）")
+    }
+
+    @MainActor
+    private func presentMenu() {
+        guard let anchorView = anchorBox.view else {
+            onPickMedia()
+            return
+        }
+
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        var targets: [AttachmentMenuActionTarget] = []
+
+        func makeItem(title: String, symbolName: String, action: @escaping () -> Void) -> NSMenuItem {
+            let target = AttachmentMenuActionTarget(handler: action)
+            targets.append(target)
+
+            let item = NSMenuItem(
+                title: title,
+                action: #selector(AttachmentMenuActionTarget.invoke(_:)),
+                keyEquivalent: ""
+            )
+            item.target = target
+            item.isEnabled = true
+            item.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
+            return item
+        }
+
+        menu.addItem(makeItem(title: "选择图片 / 视频 / 音频…", symbolName: "photo.on.rectangle.angled", action: onPickMedia))
+        menu.addItem(makeItem(title: "选择原文件…", symbolName: "doc", action: onPickDocuments))
+        menu.addItem(.separator())
+        menu.addItem(makeItem(title: "粘贴剪贴板图片或文件", symbolName: "doc.on.clipboard", action: onPasteClipboardImage))
+
+        anchorBox.retainedTargets = targets
+
+        let origin = anchorView.isFlipped
+            ? NSPoint(x: 0, y: anchorView.bounds.height + 4)
+            : NSPoint(x: 0, y: -4)
+        _ = menu.popUp(positioning: nil, at: origin, in: anchorView)
+    }
+}
+
+@MainActor
+private final class AttachmentMenuAnchorBox {
+    weak var view: NSView?
+    var retainedTargets: [AttachmentMenuActionTarget] = []
+
+    nonisolated init() {}
+}
+
+@MainActor
+private final class AttachmentMenuActionTarget: NSObject {
+    private let handler: () -> Void
+
+    init(handler: @escaping () -> Void) {
+        self.handler = handler
+    }
+
+    @objc func invoke(_ sender: Any?) {
+        handler()
+    }
+}
+
+private struct AttachmentMenuAnchorView: NSViewRepresentable {
+    let box: AttachmentMenuAnchorBox
+
+    func makeNSView(context: Context) -> PassThroughAnchorNSView {
+        let view = PassThroughAnchorNSView()
+        box.view = view
+        return view
+    }
+
+    func updateNSView(_ nsView: PassThroughAnchorNSView, context: Context) {
+        box.view = nsView
+    }
+}
+
+private final class PassThroughAnchorNSView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
     }
 }
 
