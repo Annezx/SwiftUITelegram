@@ -1,6 +1,4 @@
 import AppKit
-import AVFoundation
-import AVKit
 import SwiftUI
 
 enum MediaLightboxKind: Equatable, Hashable {
@@ -79,11 +77,16 @@ struct MediaLightboxView: View {
     let session: MediaLightboxSession
     let onQuickLook: (URL) -> Void
 
-    @State private var selectedIndex: Int = 0
+    @State private var selectedIndex: Int
     @State private var zoomScale: CGFloat = 1.0
-    @State private var videoPlayer: AVPlayer?
-    @State private var loadedVideoPath: String?
-    @FocusState private var isViewerFocused: Bool
+    @State private var playbackErrorMessage: String?
+
+    init(session: MediaLightboxSession, onQuickLook: @escaping (URL) -> Void) {
+        self.session = session
+        self.onQuickLook = onQuickLook
+        let initialIdx = session.items.firstIndex(where: { $0.id == session.initialMessageId }) ?? 0
+        self._selectedIndex = State(initialValue: initialIdx)
+    }
 
     private var currentItem: MediaLightboxItem? {
         guard session.items.indices.contains(selectedIndex) else { return nil }
@@ -109,6 +112,7 @@ struct MediaLightboxView: View {
 
                 if let item = currentItem {
                     mediaStage(for: item)
+                        .id(item.id)
                 }
 
                 navigationArrows
@@ -130,35 +134,13 @@ struct MediaLightboxView: View {
             }
         }
         .frame(minWidth: 780, idealWidth: 960, minHeight: 560, idealHeight: 680)
-        .focusable()
-        .focused($isViewerFocused)
-        .focusEffectDisabled()
-        .onKeyPress(.leftArrow) {
-            goPrevious()
-            return .handled
-        }
-        .onKeyPress(.rightArrow) {
-            goNext()
-            return .handled
-        }
-        .onKeyPress(.escape) {
-            dismiss()
-            return .handled
-        }
         .onAppear {
-            if let idx = session.items.firstIndex(where: { $0.id == session.initialMessageId }) {
-                selectedIndex = idx
-            }
-            isViewerFocused = true
             prepareCurrentItem()
         }
         .onChange(of: selectedIndex) { _, _ in
             zoomScale = 1.0
-            releaseVideoPlayer()
+            playbackErrorMessage = nil
             prepareCurrentItem()
-        }
-        .onDisappear {
-            releaseVideoPlayer()
         }
     }
 
@@ -286,10 +268,10 @@ struct MediaLightboxView: View {
             photoStage(photo: photo, state: state)
 
         case .video(let video):
-            videoStage(video: video, state: state)
+            videoStage(item: item, video: video, state: state)
 
         case .animation(let animation):
-            animationStage(animation: animation, state: state)
+            animationStage(item: item, animation: animation, state: state)
         }
     }
 
@@ -338,15 +320,58 @@ struct MediaLightboxView: View {
     }
 
     @ViewBuilder
-    private func videoStage(video: VideoMedia, state: FileTransferState) -> some View {
-        if state.isDownloaded, let localPath = state.localPath {
-            VideoPlayer(player: videoPlayer)
+    private func videoStage(item: MediaLightboxItem, video: VideoMedia, state: FileTransferState) -> some View {
+        if state.isDownloaded,
+           let localPath = state.localPath,
+           FileManager.default.fileExists(atPath: localPath)
+        {
+            if let errorMessage = playbackErrorMessage {
+                VStack(spacing: 14) {
+                    Image(systemName: "film.stack")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.white.opacity(0.75))
+                    Text("无法在内置播放器中解码此视频")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                    Text(errorMessage)
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.7))
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 420)
+                    HStack(spacing: 10) {
+                        Button("使用默认应用打开") {
+                            MediaFileActions.openExternally(
+                                localPath: localPath,
+                                preferredFileName: item.suggestedFileName,
+                                mimeType: item.mimeType
+                            )
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        Button("在 Finder 中显示") {
+                            MediaFileActions.revealInFinder(localPath: localPath)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+                .padding(24)
+            } else {
+                let playbackURL = MediaFileActions.quickLookURL(
+                    for: localPath,
+                    preferredFileName: item.suggestedFileName,
+                    mimeType: item.mimeType
+                )
+                NativeVideoPlayerView(
+                    url: playbackURL,
+                    autoPlay: true,
+                    onPlaybackFailed: { message in
+                        playbackErrorMessage = message
+                    }
+                )
                 .onAppear {
-                    loadVideoIfNeeded(path: localPath)
+                    appStore.audioPlayer.stop()
                 }
-                .onChange(of: localPath) { _, newPath in
-                    loadVideoIfNeeded(path: newPath)
-                }
+            }
         } else {
             VStack(spacing: 14) {
                 MediaTransferButton(
@@ -374,14 +399,22 @@ struct MediaLightboxView: View {
     }
 
     @ViewBuilder
-    private func animationStage(animation: AnimationMedia, state: FileTransferState) -> some View {
-        if state.isDownloaded, let localPath = state.localPath {
+    private func animationStage(item: MediaLightboxItem, animation: AnimationMedia, state: FileTransferState) -> some View {
+        if state.isDownloaded,
+           let localPath = state.localPath,
+           FileManager.default.fileExists(atPath: localPath)
+        {
+            let playbackURL = MediaFileActions.quickLookURL(
+                for: localPath,
+                preferredFileName: item.suggestedFileName,
+                mimeType: item.mimeType
+            )
             if animation.isGIFImage {
-                AnimatedGIFImageView(url: URL(fileURLWithPath: localPath))
+                AnimatedGIFImageView(url: playbackURL)
                     .padding(24)
             } else {
                 LoopingVideoPlayerView(
-                    url: URL(fileURLWithPath: localPath),
+                    url: playbackURL,
                     isMuted: true,
                     isPlaying: true,
                     videoGravity: .resizeAspect
@@ -413,6 +446,7 @@ struct MediaLightboxView: View {
                         .background(.black.opacity(0.45), in: Circle())
                 }
                 .buttonStyle(.plain)
+                .keyboardShortcut(.leftArrow, modifiers: [])
                 .padding(.leading, 14)
                 .help("上一项 (←)")
             }
@@ -428,6 +462,7 @@ struct MediaLightboxView: View {
                         .background(.black.opacity(0.45), in: Circle())
                 }
                 .buttonStyle(.plain)
+                .keyboardShortcut(.rightArrow, modifiers: [])
                 .padding(.trailing, 14)
                 .help("下一项 (→)")
             }
@@ -453,26 +488,10 @@ struct MediaLightboxView: View {
             appStore.fileCache.ensureDownloaded(animation.file, priority: 30)
         case .video(let video):
             let state = appStore.fileCache.state(for: video.file)
-            if state.isDownloaded, let path = state.localPath {
-                loadVideoIfNeeded(path: path)
+            if state.isDownloaded, let path = state.localPath, !FileManager.default.fileExists(atPath: path) {
+                appStore.fileCache.startDownload(fileId: video.file.fileId, priority: 30)
             }
         }
-    }
-
-    private func loadVideoIfNeeded(path: String) {
-        guard loadedVideoPath != path else { return }
-        releaseVideoPlayer()
-        appStore.audioPlayer.stop()
-        loadedVideoPath = path
-        let player = AVPlayer(url: URL(fileURLWithPath: path))
-        videoPlayer = player
-        player.play()
-    }
-
-    private func releaseVideoPlayer() {
-        videoPlayer?.pause()
-        videoPlayer = nil
-        loadedVideoPath = nil
     }
 
     private func title(for item: MediaLightboxItem) -> String {

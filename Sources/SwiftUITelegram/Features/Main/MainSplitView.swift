@@ -20,9 +20,17 @@ struct MainSplitView: View {
                 )
             }
         }
+        .navigationSubtitle(
+            appStore.persistedAccounts.count > 1 ? appStore.activeAccount.displayName : ""
+        )
         .toolbar {
             ToolbarItem(placement: .status) {
                 ConnectionStatusBadge(status: appStore.connectionStatus)
+            }
+        }
+        .onAppear {
+            if let selected = appStore.chatList.selectedChatId {
+                appStore.conversation.selectChat(selected)
             }
         }
         .onChange(of: appStore.chatList.selectedChatId) { _, newChatId in

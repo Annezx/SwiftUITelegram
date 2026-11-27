@@ -4,6 +4,12 @@
 
 ## 当前 MVP 已实现功能
 
+- **多账号同时在线与即时切换**
+  - 单 `TDLibClientManager` (`TDLibClientHub`) 复用多 `TDLibClient` 实例，各账号隔离独立的数据库、媒体文件目录与 `FileCacheStore`（零 `fileId` 冲突）
+  - 升级保留原单账号会话目录（`tdlib/db` + `tdlib/files`），无需重新登录
+  - 侧边栏底部账号切换弹窗显示各后台账号实时未读数，支持 `⌘1`–`⌘9` 快捷键即时切换与 `⇧⌘A` 添加新账号
+  - 自动向 Telegram 二维码登录传入 `otherUserIds`，并检测重复登录同一账号自动切换与清理冗余会话
+  - 设置窗口（`⌘,`）支持查看全部账号、逐个退出登录或移除失效账号
 - **多方式登录流程**
   - 首次运行内置 API 凭证引导（也支持 `Config/Secrets.xcconfig` 或环境变量注入）
   - 手机号 + 验证码登录

@@ -302,6 +302,7 @@ struct ConversationView: View {
     // MARK: - Media Lightbox & Pickers
 
     private func openLightbox(at messageId: Int64) {
+        guard lightboxSession == nil else { return }
         let items = MediaLightboxItem.extract(from: appStore.conversation.messages)
         guard !items.isEmpty else { return }
         lightboxSession = MediaLightboxSession(items: items, initialMessageId: messageId)

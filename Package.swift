@@ -25,7 +25,13 @@ let package = Package(
             dependencies: [
                 .product(name: "TDLibKit", package: "TDLibKit")
             ],
-            path: "Sources/SwiftUITelegram"
+            path: "Sources/SwiftUITelegram",
+            linkerSettings: [
+                .linkedFramework("AVKit"),
+                .linkedFramework("AVFoundation"),
+                .linkedFramework("QuickLook"),
+                .linkedFramework("QuickLookUI")
+            ]
         )
     ],
     swiftLanguageModes: [.v5]

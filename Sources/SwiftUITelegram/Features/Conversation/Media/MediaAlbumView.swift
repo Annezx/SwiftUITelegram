@@ -215,14 +215,10 @@ private struct AlbumMediaTileView: View {
                 state: state,
                 readySystemImage: "play.fill",
                 size: 38,
-                onStartDownload: {
-                    appStore.fileCache.startDownload(fileId: video.file.fileId, priority: 26)
-                },
-                onCancelDownload: {
-                    appStore.fileCache.cancelDownload(fileId: video.file.fileId)
-                },
-                onReadyAction: onTap
+                onStartDownload: {},
+                onCancelDownload: {}
             )
+            .allowsHitTesting(false)
 
             VStack {
                 HStack {

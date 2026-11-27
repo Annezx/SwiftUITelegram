@@ -10,6 +10,16 @@ struct AvatarView: View {
     let fileId: Int?
     let knownLocalPath: String?
     var size: CGFloat = 40
+    var fileCache: FileCacheStore? = nil
+
+    private struct DownloadTaskKey: Equatable {
+        let fileId: Int?
+        let cacheId: ObjectIdentifier
+    }
+
+    private var resolvedFileCache: FileCacheStore {
+        fileCache ?? appStore.fileCache
+    }
 
     private static let palettes: [(Color, Color)] = [
         (Color(red: 0.94, green: 0.42, blue: 0.36), Color(red: 0.85, green: 0.27, blue: 0.29)),
@@ -27,8 +37,9 @@ struct AvatarView: View {
     }
 
     var body: some View {
+        let cache = resolvedFileCache
         Group {
-            if let fileId, let image = appStore.fileCache.image(for: fileId, knownLocalPath: knownLocalPath) {
+            if let fileId, let image = cache.image(for: fileId, knownLocalPath: knownLocalPath) {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFill()
@@ -47,9 +58,9 @@ struct AvatarView: View {
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
-        .task(id: fileId) {
+        .task(id: DownloadTaskKey(fileId: fileId, cacheId: ObjectIdentifier(cache))) {
             if let fileId {
-                appStore.fileCache.ensureDownloaded(fileId: fileId, priority: 12)
+                cache.ensureDownloaded(fileId: fileId, priority: 12)
             }
         }
     }

@@ -27,9 +27,17 @@ struct VideoNoteMessageView: View {
 
         VStack(alignment: isOutgoing ? .trailing : .leading, spacing: 5) {
             ZStack {
-                if state.isDownloaded, let path = state.localPath {
+                if state.isDownloaded,
+                   let path = state.localPath,
+                   FileManager.default.fileExists(atPath: path)
+                {
+                    let playbackURL = MediaFileActions.quickLookURL(
+                        for: path,
+                        preferredFileName: "video_note_\(messageId).mp4",
+                        mimeType: "video/mp4"
+                    )
                     LoopingVideoPlayerView(
-                        url: URL(fileURLWithPath: path),
+                        url: playbackURL,
                         isMuted: !isPlayingWithSound,
                         isPlaying: true,
                         onProgress: isPlayingWithSound ? { progress in
@@ -48,13 +56,10 @@ struct VideoNoteMessageView: View {
                     MediaTransferButton(
                         state: state,
                         size: 46,
-                        onStartDownload: {
-                            appStore.fileCache.startDownload(fileId: media.file.fileId, priority: 26)
-                        },
-                        onCancelDownload: {
-                            appStore.fileCache.cancelDownload(fileId: media.file.fileId)
-                        }
+                        onStartDownload: {},
+                        onCancelDownload: {}
                     )
+                    .allowsHitTesting(false)
                 }
 
                 if isPlayingWithSound {
