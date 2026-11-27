@@ -49,12 +49,22 @@ struct AnimationMessageView: View {
         let state = transferState
 
         return ZStack {
-            if state.isDownloaded, let path = state.localPath {
+            if state.isDownloaded,
+               let path = state.localPath,
+               FileManager.default.fileExists(atPath: path)
+            {
+                let playbackURL = MediaFileActions.quickLookURL(
+                    for: path,
+                    preferredFileName: media.fileName.isEmpty
+                        ? (media.isGIFImage ? "animation_\(messageId).gif" : "animation_\(messageId).mp4")
+                        : media.fileName,
+                    mimeType: media.mimeType
+                )
                 if media.isGIFImage {
-                    AnimatedGIFImageView(url: URL(fileURLWithPath: path))
+                    AnimatedGIFImageView(url: playbackURL)
                 } else {
                     LoopingVideoPlayerView(
-                        url: URL(fileURLWithPath: path),
+                        url: playbackURL,
                         isMuted: true,
                         isPlaying: !(media.hasSpoiler && !isSpoilerRevealed)
                     )
@@ -71,13 +81,10 @@ struct AnimationMessageView: View {
                 MediaTransferButton(
                     state: state,
                     size: 44,
-                    onStartDownload: {
-                        appStore.fileCache.startDownload(fileId: media.file.fileId, priority: 24)
-                    },
-                    onCancelDownload: {
-                        appStore.fileCache.cancelDownload(fileId: media.file.fileId)
-                    }
+                    onStartDownload: {},
+                    onCancelDownload: {}
                 )
+                .allowsHitTesting(false)
             }
 
             VStack {

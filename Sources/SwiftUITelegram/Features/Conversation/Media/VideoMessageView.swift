@@ -61,14 +61,10 @@ struct VideoMessageView: View {
                 state: state,
                 readySystemImage: "play.fill",
                 size: 50,
-                onStartDownload: {
-                    appStore.fileCache.startDownload(fileId: media.file.fileId, priority: 28)
-                },
-                onCancelDownload: {
-                    appStore.fileCache.cancelDownload(fileId: media.file.fileId)
-                },
-                onReadyAction: onOpenLightbox
+                onStartDownload: {},
+                onCancelDownload: {}
             )
+            .allowsHitTesting(false)
 
             // Top-left duration & size badge
             VStack {
