@@ -11,9 +11,9 @@ struct ChatListView: View {
         let chats = chatList.visibleChats
 
         VStack(spacing: 0) {
-            // Dedicated top strip keeping native red/yellow/green traffic lights clear and draggable.
+            // Exact 28pt standard titlebar traffic-light row; search box starts immediately underneath.
             Color.clear
-                .frame(height: 32)
+                .frame(height: 28)
                 .contentShape(Rectangle())
                 .gesture(WindowDragGesture())
 
@@ -54,7 +54,6 @@ struct ChatListView: View {
                 .labelsHidden()
             }
             .padding(.horizontal, 10)
-            .padding(.top, 4)
             .padding(.bottom, 10)
 
             Divider()
@@ -123,7 +122,11 @@ struct ChatListView: View {
 
             sidebarFooter
         }
-        .background(SidebarMaterialBackground())
+        .background(
+            SidebarMaterialBackground()
+                .ignoresSafeArea(.all, edges: .top)
+        )
+        .ignoresSafeArea(.all, edges: .top)
         .sheet(item: $confirmationRequest) { request in
             ChatActionConfirmationSheet(request: request) { revoke in
                 switch request.kind {

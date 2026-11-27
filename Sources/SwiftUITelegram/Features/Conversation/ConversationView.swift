@@ -7,8 +7,6 @@ struct ConversationView: View {
     @Environment(AppStore.self) private var appStore
 
     let chat: ChatSummary
-    var isSidebarHidden: Bool = false
-    var onShowSidebar: (() -> Void)? = nil
 
     @State private var scrollPosition = ScrollPosition(idType: Int64.self)
     @State private var isNearBottom: Bool = true
@@ -222,24 +220,11 @@ struct ConversationView: View {
                 }
             }
         }
-        .ignoresSafeArea(.container, edges: .top)
+        .ignoresSafeArea(.all, edges: .top)
     }
 
     private var headerBar: some View {
         HStack(spacing: 12) {
-            if isSidebarHidden, let onShowSidebar {
-                Button(action: onShowSidebar) {
-                    Image(systemName: "sidebar.left")
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 28, height: 28)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("显示对话列表")
-                .padding(.leading, 68)
-            }
-
             AvatarView(
                 title: chat.title,
                 initials: chat.avatarInitials,

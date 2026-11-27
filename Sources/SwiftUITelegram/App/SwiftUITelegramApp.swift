@@ -19,6 +19,7 @@ struct SwiftUITelegramApp: App {
                     appDelegate.appStore = appStore
                     appStore.bootstrap()
                 }
+                .ignoresSafeArea(.all, edges: .top)
         }
         .defaultSize(width: initialSize.width, height: initialSize.height)
         .windowStyle(.hiddenTitleBar)
@@ -45,14 +46,6 @@ struct SwiftUITelegramApp: App {
                     appStore.triggerSearchFocus()
                 }
                 .keyboardShortcut("k", modifiers: [.command])
-                .disabled(appStore.authStep != .ready)
-
-                Button(appStore.isSidebarVisible ? "隐藏对话列表" : "显示对话列表") {
-                    withAnimation(.snappy(duration: 0.2)) {
-                        appStore.isSidebarVisible.toggle()
-                    }
-                }
-                .keyboardShortcut("s", modifiers: [.command, .control])
                 .disabled(appStore.authStep != .ready)
 
                 Button("刷新会话列表") {

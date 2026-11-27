@@ -5,17 +5,15 @@ struct MainSplitView: View {
 
     var body: some View {
         HSplitView {
-            if appStore.isSidebarVisible {
-                ChatListView()
-                    .frame(minWidth: 260, idealWidth: 310, maxWidth: 420)
-                    .layoutPriority(0)
-            }
+            ChatListView()
+                .frame(minWidth: 260, idealWidth: 310, maxWidth: 420)
+                .layoutPriority(0)
 
             detailColumn
                 .frame(minWidth: 460, maxWidth: .infinity, maxHeight: .infinity)
                 .layoutPriority(1)
         }
-        .ignoresSafeArea(.container, edges: .top)
+        .ignoresSafeArea(.all, edges: .top)
         .onAppear {
             if let selected = appStore.chatList.selectedChatId {
                 appStore.conversation.selectChat(selected)
@@ -29,16 +27,8 @@ struct MainSplitView: View {
     @ViewBuilder
     private var detailColumn: some View {
         if let chat = appStore.chatList.selectedChat {
-            ConversationView(
-                chat: chat,
-                isSidebarHidden: !appStore.isSidebarVisible,
-                onShowSidebar: {
-                    withAnimation(.snappy(duration: 0.2)) {
-                        appStore.isSidebarVisible = true
-                    }
-                }
-            )
-            .id(chat.id)
+            ConversationView(chat: chat)
+                .id(chat.id)
         } else {
             emptyDetailView
         }
@@ -47,21 +37,6 @@ struct MainSplitView: View {
     private var emptyDetailView: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                if !appStore.isSidebarVisible {
-                    Button {
-                        withAnimation(.snappy(duration: 0.2)) {
-                            appStore.isSidebarVisible = true
-                        }
-                    } label: {
-                        Image(systemName: "sidebar.left")
-                            .font(.body)
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("显示对话列表")
-                    .padding(.leading, 72)
-                }
-
                 Spacer()
 
                 ConnectionStatusBadge(status: appStore.connectionStatus)
@@ -78,5 +53,6 @@ struct MainSplitView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .ignoresSafeArea(.all, edges: .top)
     }
 }
