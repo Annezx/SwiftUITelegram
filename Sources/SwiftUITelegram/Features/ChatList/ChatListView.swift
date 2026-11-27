@@ -120,34 +120,8 @@ struct ChatListView: View {
     }
 
     private var sidebarFooter: some View {
-        HStack(spacing: 10) {
-            if let user = appStore.currentUser {
-                AvatarView(
-                    title: user.displayName,
-                    initials: String(user.displayName.prefix(2)).uppercased(),
-                    accentSeed: Int(user.id % 7),
-                    fileId: user.smallPhotoFileId,
-                    knownLocalPath: user.smallPhotoLocalPath,
-                    size: 28
-                )
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(user.displayName)
-                        .font(.callout.weight(.medium))
-                        .lineLimit(1)
-                    if let username = user.username {
-                        Text("@\(username)")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-            } else {
-                Text("已登录")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
+        HStack(spacing: 6) {
+            AccountSwitcherView()
 
             SettingsLink {
                 Image(systemName: "gearshape")
@@ -156,7 +130,7 @@ struct ChatListView: View {
             .buttonStyle(.borderless)
             .help("设置 (⌘,)")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
     }
 }

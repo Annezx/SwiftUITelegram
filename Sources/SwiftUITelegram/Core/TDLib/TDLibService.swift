@@ -12,31 +12,40 @@ enum TDLibServiceError: LocalizedError {
     }
 }
 
-/// Owns the process-wide `TDLibClientManager` singleton and exposes an async/await facade
-/// plus an `AsyncStream<Update>` for reactive stores.
+/// Exposes an async/await facade plus an `AsyncStream<Update>` for a single Telegram account's
+/// `TDLibClient` instance, backed by the process-wide `TDLibClientHub`.
 final class TDLibService {
-    private let manager: TDLibClientManager
+    private let hub: TDLibClientHub
+    private let databaseDirectory: String
+    private let filesDirectory: String
     private let lock = NSLock()
     private var client: TDLibClient?
     private var updateContinuation: AsyncStream<Update>.Continuation?
 
     let updates: AsyncStream<Update>
 
-    init() {
+    init(
+        hub: TDLibClientHub = TDLibClientHub(),
+        databaseDirectory: String = AppConfiguration.tdlibDatabaseDirectory,
+        filesDirectory: String = AppConfiguration.tdlibFilesDirectory
+    ) {
+        self.hub = hub
+        self.databaseDirectory = databaseDirectory
+        self.filesDirectory = filesDirectory
+
         var capturedContinuation: AsyncStream<Update>.Continuation?
         self.updates = AsyncStream<Update>(bufferingPolicy: .unbounded) { continuation in
             capturedContinuation = continuation
         }
         self.updateContinuation = capturedContinuation
-        self.manager = TDLibClientManager()
     }
 
-    /// Starts (or restarts after logout/close) the underlying TDLib client.
+    /// Starts (or restarts after logout/close) this account's underlying TDLib client.
     func startClient() {
         lock.lock()
         defer { lock.unlock() }
 
-        let newClient = manager.createClient { [weak self] data, client in
+        let newClient = hub.createClient { [weak self] data, client in
             do {
                 let update = try client.decoder.decode(Update.self, from: data)
                 self?.updateContinuation?.yield(update)
@@ -45,21 +54,29 @@ final class TDLibService {
             }
         }
 
-        // Keep TDLib's internal C++ stdout logging quiet (1 = errors only).
-        let verbosity = SetLogVerbosityLevel(newVerbosityLevel: 1)
-        _ = try? newClient.execute(query: DTO(verbosity, encoder: newClient.encoder))
-
         self.client = newClient
     }
 
-    /// Gracefully closes all active TDLib clients on app termination to protect local SQLite integrity.
-    func closeAllClients() {
+    /// Gracefully closes only this account's TDLib client instance without affecting other accounts.
+    func closeClient() async throws {
+        let activeClient: TDLibClient?
         lock.lock()
-        self.client = nil
+        activeClient = client
         lock.unlock()
 
-        manager.closeClients()
-        updateContinuation?.finish()
+        guard let activeClient else { return }
+        _ = try await activeClient.close()
+    }
+
+    /// Marks this service's update stream finished once the account session is permanently removed.
+    func finishUpdates() {
+        lock.lock()
+        self.client = nil
+        let continuation = updateContinuation
+        updateContinuation = nil
+        lock.unlock()
+
+        continuation?.finish()
     }
 
     private func requireClient() throws -> TDLibClient {
@@ -79,10 +96,10 @@ final class TDLibService {
             apiHash: credentials.apiHash,
             apiId: credentials.apiId,
             applicationVersion: AppConfiguration.applicationVersion,
-            databaseDirectory: AppConfiguration.tdlibDatabaseDirectory,
+            databaseDirectory: databaseDirectory,
             databaseEncryptionKey: Data(),
             deviceModel: AppConfiguration.deviceModel,
-            filesDirectory: AppConfiguration.tdlibFilesDirectory,
+            filesDirectory: filesDirectory,
             systemLanguageCode: AppConfiguration.systemLanguageCode,
             systemVersion: AppConfiguration.systemVersion,
             useChatInfoDatabase: true,
@@ -101,9 +118,9 @@ final class TDLibService {
         )
     }
 
-    func requestQrCodeAuthentication() async throws {
+    func requestQrCodeAuthentication(otherUserIds: [Int64] = []) async throws {
         let client = try requireClient()
-        _ = try await client.requestQrCodeAuthentication(otherUserIds: [])
+        _ = try await client.requestQrCodeAuthentication(otherUserIds: otherUserIds)
     }
 
     func checkAuthenticationCode(_ code: String) async throws {

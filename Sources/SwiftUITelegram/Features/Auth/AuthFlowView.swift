@@ -24,6 +24,10 @@ struct AuthFlowView: View {
             VStack(spacing: 24) {
                 headerBrand
 
+                if appStore.hasOtherReadyAccounts {
+                    multiAccountReturnBar
+                }
+
                 VStack(spacing: 20) {
                     switch appStore.authStep {
                     case .configuring, .loggingOut:
@@ -96,9 +100,50 @@ struct AuthFlowView: View {
             Text("SwiftUITelegram")
                 .font(.title.weight(.bold))
 
-            Text("macOS 原生 SwiftUI 客户端")
+            Text(headerSubtitle)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private var headerSubtitle: String {
+        if appStore.activeAccount.isTemporaryAddFlow && appStore.hasOtherReadyAccounts {
+            return "添加新 Telegram 账号（现有账号保持在线）"
+        }
+        if !appStore.activeAccount.isTemporaryAddFlow && appStore.hasOtherReadyAccounts {
+            return "账号「\(appStore.activeAccount.displayName)」需要重新登录"
+        }
+        return "macOS 原生 SwiftUI 客户端"
+    }
+
+    private var multiAccountReturnBar: some View {
+        HStack(spacing: 10) {
+            if appStore.activeAccount.isTemporaryAddFlow {
+                Button {
+                    appStore.cancelAddingAccount()
+                } label: {
+                    Label("返回已登录账号", systemImage: "chevron.left")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            } else {
+                Menu {
+                    ForEach(appStore.readyAccounts) { session in
+                        Button(session.displayName) {
+                            appStore.switchAccount(to: session.id)
+                        }
+                    }
+                } label: {
+                    Label("切换到已登录账号", systemImage: "person.2")
+                }
+                .controlSize(.small)
+
+                Button("移除此账号", role: .destructive) {
+                    appStore.removeAccount(accountId: appStore.activeAccountId)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
         }
     }
 

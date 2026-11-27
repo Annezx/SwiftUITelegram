@@ -48,16 +48,53 @@ enum AppConfiguration {
         return dir
     }
 
+    static let defaultAccountStorageKey = "default"
+
+    static var accountsRegistryURL: URL {
+        appSupportDirectory.appendingPathComponent("accounts.json", isDirectory: false)
+    }
+
     static var tdlibDatabaseDirectory: String {
-        let dir = appSupportDirectory.appendingPathComponent("tdlib/db", isDirectory: true)
+        tdlibDatabaseDirectory(for: defaultAccountStorageKey)
+    }
+
+    static var tdlibFilesDirectory: String {
+        tdlibFilesDirectory(for: defaultAccountStorageKey)
+    }
+
+    static func tdlibDatabaseDirectory(for storageKey: String) -> String {
+        let dir: URL
+        if storageKey == defaultAccountStorageKey {
+            dir = appSupportDirectory.appendingPathComponent("tdlib/db", isDirectory: true)
+        } else {
+            dir = appSupportDirectory.appendingPathComponent("tdlib/accounts/\(storageKey)/db", isDirectory: true)
+        }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.path
     }
 
-    static var tdlibFilesDirectory: String {
-        let dir = appSupportDirectory.appendingPathComponent("tdlib/files", isDirectory: true)
+    static func tdlibFilesDirectory(for storageKey: String) -> String {
+        let dir: URL
+        if storageKey == defaultAccountStorageKey {
+            dir = appSupportDirectory.appendingPathComponent("tdlib/files", isDirectory: true)
+        } else {
+            dir = appSupportDirectory.appendingPathComponent("tdlib/accounts/\(storageKey)/files", isDirectory: true)
+        }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.path
+    }
+
+    static func removeAccountStorage(for storageKey: String) {
+        let fm = FileManager.default
+        if storageKey == defaultAccountStorageKey {
+            let dbDir = appSupportDirectory.appendingPathComponent("tdlib/db", isDirectory: true)
+            let filesDir = appSupportDirectory.appendingPathComponent("tdlib/files", isDirectory: true)
+            try? fm.removeItem(at: dbDir)
+            try? fm.removeItem(at: filesDir)
+        } else {
+            let rootDir = appSupportDirectory.appendingPathComponent("tdlib/accounts/\(storageKey)", isDirectory: true)
+            try? fm.removeItem(at: rootDir)
+        }
     }
 
     static var mediaCacheDirectory: URL {

@@ -21,20 +21,23 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                   Features (SwiftUI Views)                  │
 │  RootView -> AuthFlowView / MainSplitView                   │
-│  ChatListView / ConversationView / SettingsView             │
+│  ChatListView (AccountSwitcher) / ConversationView / Settings│
 └──────────────────────────────▲──────────────────────────────┘
                                │ @Environment(AppStore.self)
 ┌──────────────────────────────┴──────────────────────────────┐
 │                 Stores (@MainActor @Observable)             │
-│  AppStore  ──┬── ChatListStore (排序/筛选/搜索/用户缓存)     │
-│              ├── ConversationStore (分页/发送/已读/实时更新)  │
-│              └── FileCacheStore (按需下载/NSImage 缓存)      │
+│  AppStore (多账号协调 + AudioPlaybackManager)                │
+│    └── [AccountSession] (每账号独立隔离的运行时容器)          │
+│         ├── ChatListStore (排序/筛选/搜索/用户缓存)           │
+│         ├── ConversationStore (分页/发送/相册/已读/实时更新)  │
+│         └── FileCacheStore (独立 fileId 命名空间与进度缓存)   │
 └──────────────────────────────▲──────────────────────────────┘
-                               │ AsyncStream<Update> + async API
+                               │ Per-Account AsyncStream<Update>
 ┌──────────────────────────────┴──────────────────────────────┐
 │                 Core Layer (TDLib + Models)                 │
-│  TDLibService (唯一 TDLibClientManager + 串行更新转发)        │
-│  Domain Models: ChatSummary / MessageItem / UserSummary     │
+│  TDLibClientHub (全局单 TDLibClientManager 多客户端路由)     │
+│  TDLibService (每账号独立 TDLibClient + 独立 db/files 目录)  │
+│  Domain Models: StoredAccountProfile / ChatSummary / Message │
 └──────────────────────────────▲──────────────────────────────┘
                                │ C ABI / JSON DTO
 ┌──────────────────────────────┴──────────────────────────────┐
@@ -49,11 +52,11 @@
 
 ---
 
-## 3. TDLib 集成关键细节（已在脚手架内处理）
+## 3. TDLib 集成关键细节（已在工程内处理）
 
-1. **全局单 `TDLibClientManager` 实例**：TDLib 底层 `td_receive` 只允许在单一线程轮询。`TDLibService` 全局持有一个 `TDLibClientManager`，通过 `AsyncStream<Update>` 严格保序地将更新派发到 `@MainActor`。
-2. **退出应用时优雅关闭**：`AppDelegate.applicationWillTerminate` 调用 `AppStore.shutdown()` -> `manager.closeClients()`，等待 TDLib 返回 `authorizationStateClosed`，避免 `⌘Q` 强杀导致本地 SQLite 数据库损坏。
-3. **退出登录后重建 Client**：收到 `authorizationStateClosed` 后，旧 `TDLibClient` 会被 `TDLibClientManager` 移除；`AppStore` 会清空所有内存 Store 并自动调用 `service.startClient()` 创建新客户端，无需重启应用即可切换账号。
+1. **全局单 `TDLibClientManager` 多账号并发路由（`TDLibClientHub`）**：TDLib 底层 `td_receive` 只允许在单一线程轮询。`TDLibClientHub` 全局持有一个 `TDLibClientManager`，为每个 `AccountSession` 创建独立 `TDLibClient` 并隔离各自的 `db`/`files` 目录和 `FileCacheStore`（彻底避免跨账号 `fileId` 冲突）。默认槽位兼容旧版 `tdlib/db` 路径，升级无需重新登录。
+2. **退出应用时优雅关闭**：`AppDelegate.applicationWillTerminate` 调用 `AppStore.shutdown()` -> `hub.closeAllClients()`，等待所有在线账号的 TDLib 客户端返回 `authorizationStateClosed`，避免 `⌘Q` 强杀导致本地 SQLite 数据库损坏。
+3. **单账号独立退出 / 重建与防重复登录**：多账号模式下退出或取消添加单个账号仅调用该客户端的 `logOut()` / `close()`，并在收到 `authorizationStateClosed` 后清理独立目录，不影响其余在线账号；若新登录账号与已有活跃账号 `userId` 重复则自动切换并安全退出冗余会话。
 4. **会话列表严格按 `(order, chat.id)` 降序排列**：严格遵循 TDLib `ChatPosition` 规范——仅展示 `order != 0` 的会话，排序时先比较 `order`，再比较 `chat.id`，天然支持置顶会话与实时重排。
 5. **正确处理 `loadChats` 的 404 错误**：TDLib 在会话列表全部加载完成时会抛出 code `404`，`ChatListStore` 将其识别为 `hasReachedEnd = true`，不会弹出误报。
 6. **首屏消息二次拉取补齐**：TDLib 首次 `getChatHistory` 常只返回本地缓存的 1 条 `lastMessage`；`ConversationStore` 在首批条数 `< 15` 时会自动以最旧消息 ID 再拉一页，确保打开会话立即填满窗口。

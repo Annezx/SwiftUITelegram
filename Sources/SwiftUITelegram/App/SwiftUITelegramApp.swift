@@ -18,6 +18,23 @@ struct SwiftUITelegramApp: App {
         .defaultSize(width: 1120, height: 740)
         .windowToolbarStyle(.unified)
         .commands {
+            CommandMenu("账号") {
+                ForEach(Array(appStore.persistedAccounts.prefix(9).enumerated()), id: \.element.id) { index, session in
+                    Button(session.id == appStore.activeAccountId ? "✓ \(session.displayName)" : session.displayName) {
+                        appStore.switchAccount(to: session.id)
+                    }
+                    .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: [.command])
+                }
+
+                Divider()
+
+                Button("添加账号…") {
+                    appStore.beginAddingAccount()
+                }
+                .keyboardShortcut("a", modifiers: [.command, .shift])
+                .disabled(appStore.readyAccounts.isEmpty)
+            }
+
             CommandMenu("对话") {
                 Button("搜索对话") {
                     appStore.triggerSearchFocus()
