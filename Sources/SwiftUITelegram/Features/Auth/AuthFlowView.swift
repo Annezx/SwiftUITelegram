@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct AuthFlowView: View {
@@ -79,22 +80,32 @@ struct AuthFlowView: View {
 
     private var headerBrand: some View {
         VStack(spacing: 10) {
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [Color(red: 0.21, green: 0.67, blue: 0.96), Color(red: 0.13, green: 0.52, blue: 0.86)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
+            if Bundle.main.bundleURL.pathExtension == "app",
+               let appIcon = NSImage(named: NSImage.applicationIconName)
+            {
+                Image(nsImage: appIcon)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(width: 84, height: 84)
+            } else {
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [Color(red: 0.21, green: 0.67, blue: 0.96), Color(red: 0.13, green: 0.52, blue: 0.86)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
                         )
-                    )
-                    .frame(width: 64, height: 64)
-                    .shadow(color: Color.accentColor.opacity(0.28), radius: 12, y: 6)
+                        .frame(width: 64, height: 64)
+                        .shadow(color: Color.accentColor.opacity(0.28), radius: 12, y: 6)
 
-                Image(systemName: "paperplane.fill")
-                    .font(.system(size: 28, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .offset(x: -1, y: 1)
+                    Image(systemName: "paperplane.fill")
+                        .font(.system(size: 28, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .offset(x: -1, y: 1)
+                }
             }
 
             Text("SwiftUITelegram")
