@@ -1,4 +1,7 @@
+import AppKit
+import QuickLook
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ConversationView: View {
     @Environment(AppStore.self) private var appStore
@@ -7,9 +10,21 @@ struct ConversationView: View {
 
     @State private var scrollPosition = ScrollPosition(idType: Int64.self)
     @State private var isNearBottom: Bool = true
+    @State private var voiceRecorder = VoiceRecorderManager()
+    @State private var lightboxSession: MediaLightboxSession?
+    @State private var quickLookURL: URL?
+    @State private var isDropTargeted: Bool = false
+    @State private var pasteEventMonitor: Any?
+
+    private var activeBannerError: String? {
+        appStore.conversation.errorMessage
+            ?? appStore.audioPlayer.errorMessage
+            ?? voiceRecorder.errorMessage
+    }
 
     var body: some View {
         @Bindable var conversation = appStore.conversation
+        let entries = conversation.timelineEntries
 
         VStack(spacing: 0) {
             headerBar
@@ -17,9 +32,9 @@ struct ConversationView: View {
             Divider()
 
             ZStack(alignment: .bottomTrailing) {
-                messageTimeline(messages: conversation.messages)
+                messageTimeline(entries: entries)
 
-                if !isNearBottom && !conversation.messages.isEmpty {
+                if !isNearBottom && !entries.isEmpty {
                     Button {
                         withAnimation(.snappy(duration: 0.25)) {
                             scrollPosition.scrollTo(edge: .bottom)
@@ -39,7 +54,7 @@ struct ConversationView: View {
             }
             .animation(.easeInOut(duration: 0.18), value: isNearBottom)
 
-            if let error = conversation.errorMessage {
+            if let error = activeBannerError {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.red)
@@ -49,6 +64,8 @@ struct ConversationView: View {
                     Spacer()
                     Button {
                         conversation.errorMessage = nil
+                        appStore.audioPlayer.errorMessage = nil
+                        voiceRecorder.errorMessage = nil
                     } label: {
                         Image(systemName: "xmark")
                             .font(.caption2)
@@ -64,13 +81,57 @@ struct ConversationView: View {
 
             MessageComposerView(
                 text: $conversation.draftText,
+                pendingAttachments: conversation.pendingAttachments,
+                sendAsDocument: $conversation.sendAsDocument,
+                sendWithSpoiler: $conversation.sendWithSpoiler,
+                hasToggleableOriginalMedia: conversation.hasToggleableOriginalMedia,
+                hasSpoilerCapableMedia: conversation.hasSpoilerCapableMedia,
+                isPreparingAttachments: conversation.isPreparingAttachments,
                 isSending: conversation.isSending,
+                recorder: voiceRecorder,
+                onPickMedia: presentMediaPicker,
+                onPickDocuments: presentDocumentPicker,
+                onPasteClipboardImage: { pasteMediaFromClipboard(onlyWhenNoPlainText: false) },
+                onRemoveAttachment: { id in
+                    conversation.removeAttachment(id: id)
+                },
+                onClearAttachments: {
+                    conversation.clearPendingAttachments()
+                },
                 onSend: {
                     Task { await conversation.sendCurrentDraft() }
+                },
+                onSendVoiceNote: { recorded in
+                    Task { await conversation.sendVoiceNote(recorded) }
                 }
             )
         }
         .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
+        .overlay {
+            if isDropTargeted {
+                dropOverlay
+            }
+        }
+        .onDrop(of: [.fileURL, .image], isTargeted: $isDropTargeted) { providers in
+            handleDroppedProviders(providers)
+        }
+        .quickLookPreview($quickLookURL)
+        .sheet(item: $lightboxSession) { session in
+            MediaLightboxView(
+                session: session,
+                onQuickLook: { url in
+                    quickLookURL = url
+                }
+            )
+            .environment(appStore)
+        }
+        .onAppear {
+            installPasteMonitor()
+        }
+        .onDisappear {
+            removePasteMonitor()
+            voiceRecorder.cancelRecording()
+        }
         .onChange(of: conversation.scrollToBottomTrigger) { _, _ in
             withAnimation(.snappy(duration: 0.2)) {
                 scrollPosition.scrollTo(edge: .bottom)
@@ -107,50 +168,80 @@ struct ConversationView: View {
             }
 
             Spacer()
+
+            if appStore.audioPlayer.isPlaying {
+                HStack(spacing: 6) {
+                    Image(systemName: "waveform")
+                        .font(.caption)
+                        .foregroundStyle(Color.accentColor)
+                    Text("正在播放音频")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button {
+                        appStore.audioPlayer.stop()
+                    } label: {
+                        Image(systemName: "stop.circle.fill")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("停止播放")
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(.regularMaterial, in: Capsule())
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(.bar)
     }
 
-    private func messageTimeline(messages: [MessageItem]) -> some View {
+    private func messageTimeline(entries: [ConversationTimelineEntry]) -> some View {
         ScrollView {
             LazyVStack(spacing: 6) {
                 if appStore.conversation.isLoadingOlder {
                     ProgressView()
                         .controlSize(.small)
                         .padding(.vertical, 10)
-                } else if !appStore.conversation.hasMoreOlder && !messages.isEmpty {
+                } else if !appStore.conversation.hasMoreOlder && !entries.isEmpty {
                     Text("已加载全部历史消息")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                         .padding(.vertical, 10)
                 }
 
-                if appStore.conversation.isLoadingInitial && messages.isEmpty {
+                if appStore.conversation.isLoadingInitial && entries.isEmpty {
                     ProgressView("正在加载消息…")
                         .padding(.top, 80)
-                } else if messages.isEmpty {
+                } else if entries.isEmpty {
                     ContentUnavailableView(
                         "暂无消息",
                         systemImage: "text.bubble",
-                        description: Text("发送第一条消息开始聊天吧。")
+                        description: Text("发送文字、拖拽文件或粘贴图片开始聊天吧。")
                     )
                     .padding(.top, 80)
                 } else {
-                    ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
-                        if shouldShowDateDivider(at: index, in: messages) {
-                            dateSeparator(for: message.date)
+                    ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                        if shouldShowDateDivider(at: index, in: entries) {
+                            dateSeparator(for: entry.date)
                         }
 
                         MessageBubbleView(
-                            message: message,
-                            senderName: shouldShowSenderName(for: message)
-                                ? appStore.chatList.senderDisplayName(for: message.sender)
+                            entry: entry,
+                            senderName: shouldShowSenderName(for: entry.leadMessage)
+                                ? appStore.chatList.senderDisplayName(for: entry.leadMessage.sender)
                                 : nil,
-                            isReadByRecipient: message.isOutgoing && message.id <= chat.lastReadOutboxMessageId
+                            isReadByRecipient: entry.tailMessage.isOutgoing
+                                && entry.tailMessage.id <= chat.lastReadOutboxMessageId,
+                            onOpenLightbox: { messageId in
+                                openLightbox(at: messageId)
+                            },
+                            onQuickLook: { url in
+                                quickLookURL = url
+                            }
                         )
-                        .id(message.id)
+                        .id(entry.id)
                     }
                 }
             }
@@ -176,13 +267,182 @@ struct ConversationView: View {
         }
     }
 
+    private var dropOverlay: some View {
+        ZStack {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+
+            VStack(spacing: 12) {
+                Image(systemName: "arrow.down.doc.fill")
+                    .font(.system(size: 40))
+                    .foregroundStyle(Color.accentColor)
+                Text("松开以添加到发送队列")
+                    .font(.headline)
+                Text("支持图片、视频、GIF、音频和任意文件")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(28)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color(nsColor: .windowBackgroundColor).opacity(0.92))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(
+                        Color.accentColor,
+                        style: StrokeStyle(lineWidth: 2, dash: [8, 5])
+                    )
+            )
+        }
+        .allowsHitTesting(false)
+        .transition(.opacity)
+    }
+
+    // MARK: - Media Lightbox & Pickers
+
+    private func openLightbox(at messageId: Int64) {
+        let items = MediaLightboxItem.extract(from: appStore.conversation.messages)
+        guard !items.isEmpty else { return }
+        lightboxSession = MediaLightboxSession(items: items, initialMessageId: messageId)
+    }
+
+    private func presentMediaPicker() {
+        let panel = NSOpenPanel()
+        panel.title = "选择图片、视频或音频"
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [.image, .movie, .video, .gif, .audio]
+
+        panel.begin { response in
+            guard response == .OK, !panel.urls.isEmpty else { return }
+            appStore.conversation.stageAttachmentURLs(panel.urls, forceDocument: false)
+        }
+    }
+
+    private func presentDocumentPicker() {
+        let panel = NSOpenPanel()
+        panel.title = "选择要发送的文件"
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+
+        panel.begin { response in
+            guard response == .OK, !panel.urls.isEmpty else { return }
+            appStore.conversation.stageAttachmentURLs(panel.urls, forceDocument: true)
+        }
+    }
+
+    // MARK: - Drag & Drop and Clipboard Paste
+
+    private func handleDroppedProviders(_ providers: [NSItemProvider]) -> Bool {
+        var accepted = false
+
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                accepted = true
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                    let resolvedURL: URL?
+                    if let data = item as? Data {
+                        resolvedURL = URL(dataRepresentation: data, relativeTo: nil)
+                    } else if let url = item as? URL {
+                        resolvedURL = url
+                    } else if let nsURL = item as? NSURL {
+                        resolvedURL = nsURL as URL
+                    } else {
+                        resolvedURL = nil
+                    }
+                    guard let resolvedURL else { return }
+                    Task { @MainActor in
+                        appStore.conversation.stageAttachmentURLs([resolvedURL])
+                    }
+                }
+            } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                accepted = true
+                provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+                    guard let data else { return }
+                    Task { @MainActor in
+                        if let image = NSImage(data: data) {
+                            appStore.conversation.stagePastedImage(image)
+                        }
+                    }
+                }
+            }
+        }
+
+        return accepted
+    }
+
+    @discardableResult
+    private func pasteMediaFromClipboard(onlyWhenNoPlainText: Bool) -> Bool {
+        let pasteboard = NSPasteboard.general
+
+        // When invoked via ⌘V shortcut, always let normal text paste flow into the TextField.
+        if onlyWhenNoPlainText {
+            if let text = pasteboard.string(forType: .string), !text.isEmpty {
+                let hasFileURLs = (pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL])?.isEmpty == false
+                if !hasFileURLs {
+                    return false
+                }
+            }
+        }
+
+        if let urls = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL], !urls.isEmpty {
+            appStore.conversation.stageAttachmentURLs(urls)
+            return true
+        }
+
+        if let images = pasteboard.readObjects(forClasses: [NSImage.self], options: nil) as? [NSImage],
+           let image = images.first
+        {
+            appStore.conversation.stagePastedImage(image)
+            return true
+        }
+
+        if !onlyWhenNoPlainText {
+            appStore.conversation.errorMessage = "剪贴板中未检测到可发送的图片或文件。"
+        }
+        return false
+    }
+
+    private func installPasteMonitor() {
+        removePasteMonitor()
+        pasteEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard flags == .command,
+                  event.charactersIgnoringModifiers?.lowercased() == "v",
+                  lightboxSession == nil,
+                  !voiceRecorder.isRecording
+            else {
+                return event
+            }
+            if pasteMediaFromClipboard(onlyWhenNoPlainText: true) {
+                return nil
+            }
+            return event
+        }
+    }
+
+    private func removePasteMonitor() {
+        if let monitor = pasteEventMonitor {
+            NSEvent.removeMonitor(monitor)
+            pasteEventMonitor = nil
+        }
+    }
+
+    // MARK: - Timeline Helpers
+
     private func shouldShowSenderName(for message: MessageItem) -> Bool {
         chat.kind.isGroup && !message.isOutgoing
     }
 
-    private func shouldShowDateDivider(at index: Int, in messages: [MessageItem]) -> Bool {
+    private func shouldShowDateDivider(at index: Int, in entries: [ConversationTimelineEntry]) -> Bool {
         guard index > 0 else { return true }
-        return !Calendar.current.isDate(messages[index - 1].date, inSameDayAs: messages[index].date)
+        return !Calendar.current.isDate(entries[index - 1].date, inSameDayAs: entries[index].date)
     }
 
     private func dateSeparator(for date: Date) -> some View {

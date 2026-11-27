@@ -67,13 +67,15 @@
 ### Phase 2 — 富文本、回复与媒体收发
 - [ ] 将 `FormattedText.entities` 解析为 `AttributedString`（粗体、斜体、代码块、链接、剧透、@提及）
 - [ ] 支持消息回复（`InputMessageReplyTo`）、编辑（`editMessageText`）、删除（`deleteMessages`）与转发
-- [ ] 支持图片/文件拖拽与选取发送（`InputMessagePhoto` / `InputMessageDocument`）
-- [ ] 图片灯箱预览与 `QuickLook` 集成（macOS 原生体验）
+- [x] 支持图片/视频/GIF/音频/文件选取、拖拽、剪贴板 `⌘V` 粘贴与多图相册发送（`InputMessagePhoto` / `InputMessageVideo` / `InputMessageAnimation` / `InputMessageAudio` / `InputMessageDocument` / `sendMessageAlbum`）
+- [x] 图片/视频/GIF 灯箱预览（缩放、键盘切换、`AVKit` 播放）与 `QuickLook` 集成（macOS 原生体验）
+- [x] 语音消息录制（`AVAudioRecorder` + 5-bit 波形编码）与 OGG/Opus 原生播放（零依赖 OGG → Apple CAF 无损重封装 + 波形进度拖拽 + 倍速播放）
+- [x] 圆形视频消息（Video Note）、动态 GIF 内联循环播放、贴纸展示、文件下载/上传进度与取消控制、另存为 / Finder 定位
 - [ ] 聊天文件夹 Tabs（`updateChatFolders` + `ChatListFolder`）
 
 ### Phase 3 — 桌面端深度体验优化
 - [ ] 真正的多窗口支持（双击会话在新 macOS 窗口中独立打开）
-- [ ] 语音消息播放与波形显示、贴纸（WebP / TGS Lottie / WebM）与 Emoji 表情面板
+- [ ] 贴纸动画渲染（TGS Lottie / WebM）与贴纸 / Emoji 表情选择器面板
 - [ ] 草稿云端同步（`setChatDraftMessage` + `updateChatDraftMessage`）
 - [ ] macOS 系统通知（`UNUserNotificationCenter`）与 Dock 未读角标（`NSApp.dockTile.badgeLabel`）
 - [ ] 代理配置面板（MTProxy / SOCKS5 / HTTP，`addProxy` / `enableProxy`）

@@ -197,7 +197,6 @@ final class TDLibService {
     }
 
     func sendTextMessage(chatId: Int64, text: String) async throws -> Message {
-        let client = try requireClient()
         let content = InputMessageContent.inputMessageText(
             InputMessageText(
                 clearDraft: true,
@@ -205,6 +204,11 @@ final class TDLibService {
                 text: FormattedText(entities: [], text: text)
             )
         )
+        return try await sendMessage(chatId: chatId, content: content)
+    }
+
+    func sendMessage(chatId: Int64, content: InputMessageContent) async throws -> Message {
+        let client = try requireClient()
         return try await client.sendMessage(
             chatId: chatId,
             inputMessageContent: content,
@@ -213,6 +217,162 @@ final class TDLibService {
             replyTo: nil,
             topicId: nil
         )
+    }
+
+    func sendMessageAlbum(chatId: Int64, contents: [InputMessageContent]) async throws -> [Message] {
+        guard !contents.isEmpty else { return [] }
+        if contents.count == 1 {
+            let msg = try await sendMessage(chatId: chatId, content: contents[0])
+            return [msg]
+        }
+        let client = try requireClient()
+        let result = try await client.sendMessageAlbum(
+            chatId: chatId,
+            inputMessageContents: contents,
+            options: nil,
+            replyTo: nil,
+            topicId: nil
+        )
+        return result.messages ?? []
+    }
+
+    func sendVoiceNote(
+        chatId: Int64,
+        filePath: String,
+        duration: Int,
+        waveform: Data,
+        caption: String = ""
+    ) async throws -> Message {
+        let formattedCaption = caption.isEmpty ? nil : FormattedText(entities: [], text: caption)
+        let inputVoice = InputVoiceNote(
+            duration: max(duration, 1),
+            voiceNote: .inputFileLocal(InputFileLocal(path: filePath)),
+            waveform: waveform
+        )
+        let content = InputMessageContent.inputMessageVoiceNote(
+            InputMessageVoiceNote(
+                caption: formattedCaption,
+                selfDestructType: nil,
+                voiceNote: inputVoice
+            )
+        )
+        return try await sendMessage(chatId: chatId, content: content)
+    }
+
+    static func makeInputContent(
+        for attachment: PendingAttachment,
+        caption: String,
+        sendAsDocument: Bool,
+        hasSpoiler: Bool
+    ) -> InputMessageContent {
+        let trimmedCaption = caption.trimmingCharacters(in: .whitespacesAndNewlines)
+        let formattedCaption = trimmedCaption.isEmpty ? nil : FormattedText(entities: [], text: trimmedCaption)
+
+        let inputThumbnail: InputThumbnail? = attachment.thumbnailURL.map { url in
+            InputThumbnail(
+                height: attachment.thumbnailHeight,
+                thumbnail: .inputFileLocal(InputFileLocal(path: url.path)),
+                width: attachment.thumbnailWidth
+            )
+        }
+
+        if sendAsDocument {
+            return .inputMessageDocument(
+                InputMessageDocument(
+                    caption: formattedCaption,
+                    document: InputDocument(
+                        disableContentTypeDetection: true,
+                        document: .inputFileLocal(InputFileLocal(path: attachment.stagedOriginalURL.path)),
+                        thumbnail: inputThumbnail
+                    )
+                )
+            )
+        }
+
+        switch attachment.kind {
+        case .photo:
+            let photoPath = (attachment.preparedPhotoURL ?? attachment.stagedOriginalURL).path
+            return .inputMessagePhoto(
+                InputMessagePhoto(
+                    caption: formattedCaption,
+                    hasSpoiler: hasSpoiler,
+                    photo: InputPhoto(
+                        addedStickerFileIds: [],
+                        height: attachment.height,
+                        photo: .inputFileLocal(InputFileLocal(path: photoPath)),
+                        thumbnail: inputThumbnail,
+                        video: nil,
+                        width: attachment.width
+                    ),
+                    selfDestructType: nil,
+                    showCaptionAboveMedia: false
+                )
+            )
+
+        case .video:
+            return .inputMessageVideo(
+                InputMessageVideo(
+                    caption: formattedCaption,
+                    hasSpoiler: hasSpoiler,
+                    selfDestructType: nil,
+                    showCaptionAboveMedia: false,
+                    video: InputVideo(
+                        addedStickerFileIds: [],
+                        cover: nil,
+                        duration: attachment.duration,
+                        height: attachment.height,
+                        startTimestamp: 0,
+                        supportsStreaming: true,
+                        thumbnail: inputThumbnail,
+                        video: .inputFileLocal(InputFileLocal(path: attachment.stagedOriginalURL.path)),
+                        width: attachment.width
+                    )
+                )
+            )
+
+        case .animation:
+            return .inputMessageAnimation(
+                InputMessageAnimation(
+                    animation: InputAnimation(
+                        addedStickerFileIds: [],
+                        animation: .inputFileLocal(InputFileLocal(path: attachment.stagedOriginalURL.path)),
+                        duration: attachment.duration,
+                        height: attachment.height,
+                        thumbnail: inputThumbnail,
+                        width: attachment.width
+                    ),
+                    caption: formattedCaption,
+                    hasSpoiler: hasSpoiler,
+                    showCaptionAboveMedia: false
+                )
+            )
+
+        case .audio:
+            return .inputMessageAudio(
+                InputMessageAudio(
+                    audio: InputAudio(
+                        albumCoverThumbnail: inputThumbnail,
+                        audio: .inputFileLocal(InputFileLocal(path: attachment.stagedOriginalURL.path)),
+                        duration: attachment.duration,
+                        performer: attachment.audioPerformer,
+                        title: attachment.audioTitle
+                    ),
+                    caption: formattedCaption
+                )
+            )
+
+        case .document:
+            return .inputMessageDocument(
+                InputMessageDocument(
+                    caption: formattedCaption,
+                    document: InputDocument(
+                        disableContentTypeDetection: false,
+                        document: .inputFileLocal(InputFileLocal(path: attachment.stagedOriginalURL.path)),
+                        thumbnail: inputThumbnail
+                    )
+                )
+            )
+        }
     }
 
     func viewMessages(chatId: Int64, messageIds: [Int64]) async throws {
@@ -226,6 +386,11 @@ final class TDLibService {
         )
     }
 
+    func openMessageContent(chatId: Int64, messageId: Int64) async throws {
+        let client = try requireClient()
+        _ = try await client.openMessageContent(chatId: chatId, messageId: messageId)
+    }
+
     // MARK: - Files
 
     func downloadFile(fileId: Int, priority: Int = 16) async throws -> File {
@@ -237,5 +402,15 @@ final class TDLibService {
             priority: priority,
             synchronous: false
         )
+    }
+
+    func cancelDownloadFile(fileId: Int, onlyIfPending: Bool = false) async throws {
+        let client = try requireClient()
+        _ = try await client.cancelDownloadFile(fileId: fileId, onlyIfPending: onlyIfPending)
+    }
+
+    func getFile(fileId: Int) async throws -> File {
+        let client = try requireClient()
+        return try await client.getFile(fileId: fileId)
     }
 }

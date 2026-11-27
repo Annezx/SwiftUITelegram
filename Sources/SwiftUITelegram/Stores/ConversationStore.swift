@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import TDLibKit
@@ -14,13 +15,33 @@ final class ConversationStore {
     private(set) var isLoadingOlder: Bool = false
     private(set) var hasMoreOlder: Bool = true
     private(set) var isSending: Bool = false
+    private(set) var isPreparingAttachments: Bool = false
+    private(set) var pendingAttachments: [PendingAttachment] = []
     private(set) var scrollToBottomTrigger: Int = 0
 
     var draftText: String = ""
+    var sendAsDocument: Bool = false
+    var sendWithSpoiler: Bool = false
     var errorMessage: String?
 
     init(service: TDLibService) {
         self.service = service
+    }
+
+    var timelineEntries: [ConversationTimelineEntry] {
+        ConversationTimelineEntry.group(messages)
+    }
+
+    var hasSendableContent: Bool {
+        !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingAttachments.isEmpty
+    }
+
+    var hasToggleableOriginalMedia: Bool {
+        pendingAttachments.contains { $0.supportsOriginalFileToggle }
+    }
+
+    var hasSpoilerCapableMedia: Bool {
+        !sendAsDocument && pendingAttachments.contains { $0.supportsSpoiler }
     }
 
     func selectChat(_ chatId: Int64?) {
@@ -31,6 +52,7 @@ final class ConversationStore {
         loadTask?.cancel()
         messages = []
         draftText = ""
+        clearPendingAttachments()
         errorMessage = nil
         hasMoreOlder = true
         isLoadingInitial = false
@@ -85,10 +107,84 @@ final class ConversationStore {
         }
     }
 
+    // MARK: - Attachments Staging
+
+    func stageAttachmentURLs(_ urls: [URL], forceDocument: Bool = false) {
+        guard activeChatId != nil, !urls.isEmpty else { return }
+        let targetChatId = activeChatId
+        errorMessage = nil
+        isPreparingAttachments = true
+
+        Task {
+            defer { isPreparingAttachments = false }
+            let prepared = await MediaAttachmentPreparer.prepare(urls: urls, forceDocument: forceDocument)
+            guard activeChatId == targetChatId else {
+                for item in prepared { MediaAttachmentPreparer.cleanup(item) }
+                return
+            }
+            if prepared.isEmpty {
+                errorMessage = "所选内容不包含可发送的文件（暂不支持直接发送文件夹）。"
+                return
+            }
+            pendingAttachments.append(contentsOf: prepared)
+            if forceDocument && !pendingAttachments.contains(where: { $0.supportsOriginalFileToggle }) {
+                sendAsDocument = false
+            }
+        }
+    }
+
+    func stagePastedImage(_ image: NSImage) {
+        guard activeChatId != nil else { return }
+        let targetChatId = activeChatId
+        errorMessage = nil
+        isPreparingAttachments = true
+
+        Task {
+            defer { isPreparingAttachments = false }
+            guard let prepared = await MediaAttachmentPreparer.preparePastedImage(image) else {
+                errorMessage = "无法读取剪贴板中的图片。"
+                return
+            }
+            guard activeChatId == targetChatId else {
+                MediaAttachmentPreparer.cleanup(prepared)
+                return
+            }
+            pendingAttachments.append(prepared)
+        }
+    }
+
+    func removeAttachment(id: UUID) {
+        if let idx = pendingAttachments.firstIndex(where: { $0.id == id }) {
+            let removed = pendingAttachments.remove(at: idx)
+            MediaAttachmentPreparer.cleanup(removed)
+        }
+        if pendingAttachments.isEmpty {
+            sendAsDocument = false
+            sendWithSpoiler = false
+        }
+    }
+
+    func clearPendingAttachments() {
+        for item in pendingAttachments {
+            MediaAttachmentPreparer.cleanup(item)
+        }
+        pendingAttachments = []
+        sendAsDocument = false
+        sendWithSpoiler = false
+    }
+
+    // MARK: - Sending Messages & Media
+
     func sendCurrentDraft() async {
-        guard let chatId = activeChatId else { return }
+        guard let chatId = activeChatId, !isSending else { return }
+
+        if !pendingAttachments.isEmpty {
+            await sendPendingAttachments(in: chatId)
+            return
+        }
+
         let trimmed = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isSending else { return }
+        guard !trimmed.isEmpty else { return }
 
         let outgoingText = trimmed
         draftText = ""
@@ -104,6 +200,37 @@ final class ConversationStore {
         } catch {
             draftText = outgoingText
             errorMessage = TDLibErrorHelper.userFacingMessage(for: error)
+        }
+    }
+
+    func sendVoiceNote(_ recorded: RecordedVoiceNote) async {
+        guard let chatId = activeChatId, !isSending else { return }
+        errorMessage = nil
+        isSending = true
+        defer { isSending = false }
+
+        do {
+            let sentMessage = try await service.sendVoiceNote(
+                chatId: chatId,
+                filePath: recorded.fileURL.path,
+                duration: recorded.duration,
+                waveform: recorded.waveform
+            )
+            guard activeChatId == chatId else { return }
+            upsertMessage(MessageItem(tdMessage: sentMessage))
+            scrollToBottomTrigger += 1
+        } catch {
+            errorMessage = TDLibErrorHelper.userFacingMessage(for: error)
+        }
+    }
+
+    func markMessageContentOpened(messageId: Int64) {
+        guard let chatId = activeChatId else { return }
+        if let index = messages.firstIndex(where: { $0.id == messageId }) {
+            messages[index].markContentOpened()
+        }
+        Task {
+            _ = try? await service.openMessageContent(chatId: chatId, messageId: messageId)
         }
     }
 
@@ -134,6 +261,12 @@ final class ConversationStore {
                 messages[index].content = MessageDisplayContent(from: info.newContent)
             }
 
+        case .updateMessageContentOpened(let info):
+            guard info.chatId == activeChatId else { return }
+            if let index = messages.firstIndex(where: { $0.id == info.messageId }) {
+                messages[index].markContentOpened()
+            }
+
         case .updateMessageEdited(let info):
             guard info.chatId == activeChatId else { return }
             if let index = messages.firstIndex(where: { $0.id == info.messageId }) {
@@ -157,14 +290,103 @@ final class ConversationStore {
         activeChatId = nil
         messages = []
         draftText = ""
+        clearPendingAttachments()
         errorMessage = nil
         hasMoreOlder = true
         isLoadingInitial = false
         isLoadingOlder = false
         isSending = false
+        isPreparingAttachments = false
     }
 
-    // MARK: - Private
+    // MARK: - Private Media Dispatch
+
+    private func sendPendingAttachments(in chatId: Int64) async {
+        let attachments = pendingAttachments
+        let caption = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let asDocument = sendAsDocument
+        let spoiler = sendWithSpoiler && !asDocument
+
+        // Keep staged files on disk because TDLib uploads asynchronously in the background.
+        pendingAttachments = []
+        draftText = ""
+        sendAsDocument = false
+        sendWithSpoiler = false
+        errorMessage = nil
+        isSending = true
+        defer { isSending = false }
+
+        do {
+            let canGroupAsAlbum = Self.canSendAsAlbum(attachments: attachments, sendAsDocument: asDocument)
+            var sentMessages: [Message] = []
+
+            if canGroupAsAlbum {
+                var offset = 0
+                while offset < attachments.count {
+                    let end = min(offset + 10, attachments.count)
+                    let slice = Array(attachments[offset..<end])
+                    let contents: [InputMessageContent] = slice.enumerated().map { index, item in
+                        let itemCaption = (offset == 0 && index == 0) ? caption : ""
+                        return TDLibService.makeInputContent(
+                            for: item,
+                            caption: itemCaption,
+                            sendAsDocument: asDocument,
+                            hasSpoiler: spoiler
+                        )
+                    }
+                    let batch = try await service.sendMessageAlbum(chatId: chatId, contents: contents)
+                    sentMessages.append(contentsOf: batch)
+                    offset = end
+                }
+            } else {
+                for (index, item) in attachments.enumerated() {
+                    let itemCaption = index == 0 ? caption : ""
+                    let content = TDLibService.makeInputContent(
+                        for: item,
+                        caption: itemCaption,
+                        sendAsDocument: asDocument,
+                        hasSpoiler: spoiler
+                    )
+                    let msg = try await service.sendMessage(chatId: chatId, content: content)
+                    sentMessages.append(msg)
+                }
+            }
+
+            guard activeChatId == chatId else { return }
+            for msg in sentMessages {
+                upsertMessage(MessageItem(tdMessage: msg))
+            }
+            scrollToBottomTrigger += 1
+        } catch {
+            if activeChatId == chatId {
+                pendingAttachments = attachments
+                draftText = caption
+                sendAsDocument = asDocument
+                sendWithSpoiler = spoiler
+                errorMessage = TDLibErrorHelper.userFacingMessage(for: error)
+            }
+        }
+    }
+
+    /// Checks TDLib's album grouping rules:
+    /// - Photos & videos may be mixed in one album.
+    /// - Documents may be grouped only with documents.
+    /// - Audios may be grouped only with audios.
+    /// - Animations (GIFs) cannot be grouped in albums.
+    private static func canSendAsAlbum(attachments: [PendingAttachment], sendAsDocument: Bool) -> Bool {
+        guard attachments.count >= 2 else { return false }
+        if sendAsDocument {
+            return true
+        }
+        let allPhotoOrVideo = attachments.allSatisfy { $0.kind == .photo || $0.kind == .video }
+        if allPhotoOrVideo { return true }
+        let allDocuments = attachments.allSatisfy { $0.kind == .document }
+        if allDocuments { return true }
+        let allAudios = attachments.allSatisfy { $0.kind == .audio }
+        return allAudios
+    }
+
+    // MARK: - Private History Helpers
 
     private func loadInitialHistory(for chatId: Int64) async {
         isLoadingInitial = true

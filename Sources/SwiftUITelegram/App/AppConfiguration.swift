@@ -60,6 +60,54 @@ enum AppConfiguration {
         return dir.path
     }
 
+    static var mediaCacheDirectory: URL {
+        let dir = appSupportDirectory.appendingPathComponent("media-cache", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    static var outgoingStagingDirectory: URL {
+        let dir = mediaCacheDirectory.appendingPathComponent("outgoing", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    static var quickLookStagingDirectory: URL {
+        let dir = mediaCacheDirectory.appendingPathComponent("quicklook", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    static var audioTranscodeCacheDirectory: URL {
+        let dir = mediaCacheDirectory.appendingPathComponent("audio-caf", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    static func clearMediaCache() {
+        let fm = FileManager.default
+        try? fm.removeItem(at: mediaCacheDirectory)
+        _ = mediaCacheDirectory
+    }
+
+    static func pruneStaleOutgoingStaging(olderThan interval: TimeInterval = 24 * 60 * 60) {
+        let fm = FileManager.default
+        let cutoff = Foundation.Date().addingTimeInterval(-interval)
+        guard let items = try? fm.contentsOfDirectory(
+            at: outgoingStagingDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return
+        }
+        for url in items {
+            let modDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            if modDate < cutoff {
+                try? fm.removeItem(at: url)
+            }
+        }
+    }
+
     static var applicationVersion: String {
         (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)
             .flatMap { $0.isEmpty ? nil : $0 } ?? "0.1.0"

@@ -45,6 +45,7 @@ targets:
         LSMinimumSystemVersion: "$(MACOSX_DEPLOYMENT_TARGET)"
         NSHumanReadableCopyright: "Copyright © 2026 SwiftUITelegram."
         NSPrincipalClass: NSApplication
+        NSMicrophoneUsageDescription: "SwiftUITelegram 需要访问麦克风以录制并发送语音消息。"
         TELEGRAM_API_ID: "$(TELEGRAM_API_ID)"
         TELEGRAM_API_HASH: "$(TELEGRAM_API_HASH)"
     entitlements:

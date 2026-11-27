@@ -9,6 +9,7 @@ import TDLibKit
 final class AppStore {
     let service: TDLibService
     let fileCache: FileCacheStore
+    let audioPlayer: AudioPlaybackManager
     let chatList: ChatListStore
     let conversation: ConversationStore
 
@@ -28,6 +29,7 @@ final class AppStore {
     init(service: TDLibService = TDLibService()) {
         self.service = service
         self.fileCache = FileCacheStore(service: service)
+        self.audioPlayer = AudioPlaybackManager()
         self.chatList = ChatListStore(service: service)
         self.conversation = ConversationStore(service: service)
     }
@@ -36,12 +38,14 @@ final class AppStore {
         guard !hasBootstrapped else { return }
         hasBootstrapped = true
 
+        AppConfiguration.pruneStaleOutgoingStaging()
         credentials = AppConfiguration.loadCredentials()
         startUpdateLoop()
         service.startClient()
     }
 
     func shutdown() {
+        audioPlayer.stop()
         updatesTask?.cancel()
         updatesTask = nil
         service.closeAllClients()
@@ -192,6 +196,7 @@ final class AppStore {
         case .authorizationStateClosed:
             awaitingTdlibParameters = false
             currentUser = nil
+            audioPlayer.stop()
             chatList.reset()
             conversation.reset()
             fileCache.reset()
