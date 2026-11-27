@@ -131,14 +131,15 @@ struct MessageComposerView: View {
                     Label("粘贴剪贴板图片或文件", systemImage: "doc.on.clipboard")
                 }
             } label: {
-                Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 24))
+                Image(systemName: "paperclip.circle.fill")
+                    .font(.system(size: 26))
                     .foregroundStyle(.secondary)
                     .frame(width: 32, height: 32)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
+            .frame(width: LayoutMetrics.composerControlHeight, height: LayoutMetrics.composerControlHeight)
             .disabled(isSending)
             .help("发送图片、视频、音频或文件（也支持直接拖拽或 ⌘V 粘贴图片）")
 
@@ -152,13 +153,14 @@ struct MessageComposerView: View {
             .textFieldStyle(.plain)
             .lineLimit(1...6)
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.vertical, 6)
+            .frame(minHeight: LayoutMetrics.composerControlHeight)
             .background(
                 Color(nsColor: .controlBackgroundColor),
-                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                in: RoundedRectangle(cornerRadius: LayoutMetrics.composerControlHeight / 2, style: .continuous)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                RoundedRectangle(cornerRadius: LayoutMetrics.composerControlHeight / 2, style: .continuous)
                     .strokeBorder(.separator.opacity(0.6), lineWidth: 1)
             )
             .onSubmit {
@@ -180,7 +182,7 @@ struct MessageComposerView: View {
                                 .font(.system(size: 26))
                         }
                     }
-                    .frame(width: 32, height: 32)
+                    .frame(width: LayoutMetrics.composerControlHeight, height: LayoutMetrics.composerControlHeight)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(canSend ? Color.accentColor : Color.secondary.opacity(0.4))
@@ -193,7 +195,7 @@ struct MessageComposerView: View {
                     Image(systemName: "mic.circle.fill")
                         .font(.system(size: 26))
                         .foregroundStyle(.secondary)
-                        .frame(width: 32, height: 32)
+                        .frame(width: LayoutMetrics.composerControlHeight, height: LayoutMetrics.composerControlHeight)
                 }
                 .buttonStyle(.plain)
                 .disabled(isPreparingAttachments)
@@ -201,7 +203,8 @@ struct MessageComposerView: View {
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.vertical, LayoutMetrics.composerVerticalPadding)
+        .frame(minHeight: LayoutMetrics.bottomBarHeight)
     }
 
     // MARK: - Voice Recording Bar
@@ -214,7 +217,7 @@ struct MessageComposerView: View {
                 Image(systemName: "trash.circle.fill")
                     .font(.system(size: 26))
                     .foregroundStyle(.red.opacity(0.85))
-                    .frame(width: 32, height: 32)
+                    .frame(width: LayoutMetrics.composerControlHeight, height: LayoutMetrics.composerControlHeight)
             }
             .buttonStyle(.plain)
             .help("取消录音")
@@ -233,13 +236,13 @@ struct MessageComposerView: View {
                 liveWaveformStrip
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .frame(height: LayoutMetrics.composerControlHeight)
             .background(
                 Color(nsColor: .controlBackgroundColor),
-                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                in: RoundedRectangle(cornerRadius: LayoutMetrics.composerControlHeight / 2, style: .continuous)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                RoundedRectangle(cornerRadius: LayoutMetrics.composerControlHeight / 2, style: .continuous)
                     .strokeBorder(Color.red.opacity(0.35), lineWidth: 1)
             )
 
@@ -251,13 +254,14 @@ struct MessageComposerView: View {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.system(size: 26))
                     .foregroundStyle(Color.accentColor)
-                    .frame(width: 32, height: 32)
+                    .frame(width: LayoutMetrics.composerControlHeight, height: LayoutMetrics.composerControlHeight)
             }
             .buttonStyle(.plain)
             .help("结束并发送语音")
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.vertical, LayoutMetrics.composerVerticalPadding)
+        .frame(minHeight: LayoutMetrics.bottomBarHeight)
     }
 
     private var liveWaveformStrip: some View {
@@ -268,11 +272,11 @@ struct MessageComposerView: View {
                 let level: Float = offset >= 0 && offset < levels.count ? levels[offset] : 0.08
                 Capsule()
                     .fill(offset >= 0 ? Color.red.opacity(0.85) : Color.secondary.opacity(0.25))
-                    .frame(width: 3, height: max(4, CGFloat(level) * 20))
+                    .frame(width: 3, height: max(4, CGFloat(level) * 18))
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
-        .frame(height: 22)
+        .frame(height: 20)
         .animation(.linear(duration: 0.06), value: recorder.liveLevels.count)
     }
 }

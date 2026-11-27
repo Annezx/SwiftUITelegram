@@ -21,7 +21,7 @@ struct AccountSwitcherView: View {
                     accentSeed: active.accentColorId,
                     fileId: active.smallPhotoFileId,
                     knownLocalPath: active.smallPhotoLocalPath,
-                    size: 28,
+                    size: 30,
                     fileCache: active.fileCache
                 )
 

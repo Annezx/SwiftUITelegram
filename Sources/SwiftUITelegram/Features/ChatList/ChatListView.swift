@@ -126,11 +126,14 @@ struct ChatListView: View {
             SettingsLink {
                 Image(systemName: "gearshape")
                     .font(.body)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
             .help("设置 (⌘,)")
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity)
+        .frame(height: LayoutMetrics.bottomBarHeight)
     }
 }
