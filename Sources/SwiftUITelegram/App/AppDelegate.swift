@@ -14,6 +14,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        if let mainWindow = MainWindowFrameStore.mainWindow {
+            MainWindowFrameStore.saveFrame(for: mainWindow)
+        }
         appStore?.shutdown()
     }
 }

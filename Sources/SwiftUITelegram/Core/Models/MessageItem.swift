@@ -34,8 +34,142 @@ enum MessageDeliveryStatus: Equatable, Hashable, Sendable {
     }
 }
 
+enum MessageOriginInfo: Equatable, Hashable, Sendable {
+    case user(userId: Int64)
+    case hiddenUser(senderName: String)
+    case chat(chatId: Int64, authorSignature: String)
+    case channel(chatId: Int64, messageId: Int64, authorSignature: String)
+
+    init(from tdOrigin: MessageOrigin) {
+        switch tdOrigin {
+        case .messageOriginUser(let value):
+            self = .user(userId: value.senderUserId)
+        case .messageOriginHiddenUser(let value):
+            self = .hiddenUser(senderName: value.senderName)
+        case .messageOriginChat(let value):
+            self = .chat(chatId: value.senderChatId, authorSignature: value.authorSignature)
+        case .messageOriginChannel(let value):
+            self = .channel(
+                chatId: value.chatId,
+                messageId: value.messageId,
+                authorSignature: value.authorSignature
+            )
+        }
+    }
+}
+
+struct MessageForwardMetadata: Equatable, Hashable, Sendable {
+    let date: Foundation.Date
+    let origin: MessageOriginInfo
+
+    init(date: Foundation.Date, origin: MessageOriginInfo) {
+        self.date = date
+        self.origin = origin
+    }
+
+    init(from tdForwardInfo: MessageForwardInfo) {
+        self.date = Foundation.Date(timeIntervalSince1970: TimeInterval(tdForwardInfo.date))
+        self.origin = MessageOriginInfo(from: tdForwardInfo.origin)
+    }
+}
+
+struct MessageReplyReference: Equatable, Hashable, Sendable {
+    let chatId: Int64
+    let messageId: Int64
+    let quoteText: FormattedTextContent?
+    let origin: MessageOriginInfo?
+    let externalPreviewText: String?
+    let isStoryReply: Bool
+
+    init(
+        chatId: Int64,
+        messageId: Int64,
+        quoteText: FormattedTextContent? = nil,
+        origin: MessageOriginInfo? = nil,
+        externalPreviewText: String? = nil,
+        isStoryReply: Bool = false
+    ) {
+        self.chatId = chatId
+        self.messageId = messageId
+        self.quoteText = quoteText
+        self.origin = origin
+        self.externalPreviewText = externalPreviewText
+        self.isStoryReply = isStoryReply
+    }
+
+    init(from tdReplyTo: MessageReplyTo) {
+        switch tdReplyTo {
+        case .messageReplyToMessage(let value):
+            self.chatId = value.chatId
+            self.messageId = value.messageId
+            if let quote = value.quote, !quote.text.text.isEmpty {
+                self.quoteText = FormattedTextContent(tdFormattedText: quote.text)
+            } else {
+                self.quoteText = nil
+            }
+            self.origin = value.origin.map(MessageOriginInfo.init(from:))
+            self.externalPreviewText = value.content.map { MessageDisplayContent(from: $0).previewText }
+            self.isStoryReply = false
+
+        case .messageReplyToStory(let value):
+            self.chatId = value.storyPosterChatId
+            self.messageId = 0
+            self.quoteText = nil
+            self.origin = nil
+            self.externalPreviewText = "[动态]"
+            self.isStoryReply = true
+        }
+    }
+}
+
+struct MessagePermissions: Equatable, Hashable, Sendable {
+    let canBeReplied: Bool
+    let canBeEdited: Bool
+    let canBeDeletedOnlyForSelf: Bool
+    let canBeDeletedForAllUsers: Bool
+    let canBeForwarded: Bool
+    let canBeCopied: Bool
+    let canBePinned: Bool
+    let canGetLink: Bool
+
+    var canBeDeleted: Bool {
+        canBeDeletedOnlyForSelf || canBeDeletedForAllUsers
+    }
+
+    init(
+        canBeReplied: Bool,
+        canBeEdited: Bool,
+        canBeDeletedOnlyForSelf: Bool,
+        canBeDeletedForAllUsers: Bool,
+        canBeForwarded: Bool,
+        canBeCopied: Bool,
+        canBePinned: Bool = false,
+        canGetLink: Bool = false
+    ) {
+        self.canBeReplied = canBeReplied
+        self.canBeEdited = canBeEdited
+        self.canBeDeletedOnlyForSelf = canBeDeletedOnlyForSelf
+        self.canBeDeletedForAllUsers = canBeDeletedForAllUsers
+        self.canBeForwarded = canBeForwarded
+        self.canBeCopied = canBeCopied
+        self.canBePinned = canBePinned
+        self.canGetLink = canGetLink
+    }
+
+    init(from properties: MessageProperties) {
+        self.canBeReplied = properties.canBeReplied
+        self.canBeEdited = properties.canBeEdited
+        self.canBeDeletedOnlyForSelf = properties.canBeDeletedOnlyForSelf
+        self.canBeDeletedForAllUsers = properties.canBeDeletedForAllUsers
+        self.canBeForwarded = properties.canBeForwarded
+        self.canBeCopied = properties.canBeCopied
+        self.canBePinned = properties.canBePinned
+        self.canGetLink = properties.canGetLink
+    }
+}
+
 enum MessageDisplayContent: Equatable, Hashable, Sendable {
-    case text(String)
+    case text(FormattedTextContent)
     case photo(PhotoMedia)
     case video(VideoMedia)
     case videoNote(VideoNoteMedia)
@@ -51,7 +185,7 @@ enum MessageDisplayContent: Equatable, Hashable, Sendable {
     init(from content: MessageContent) {
         switch content {
         case .messageText(let value):
-            self = .text(value.text.text)
+            self = .text(FormattedTextContent(tdFormattedText: value.text))
 
         case .messagePhoto(let value):
             let sortedSizes = value.photo.sizes.sorted { ($0.width * $0.height) < ($1.width * $1.height) }
@@ -66,7 +200,7 @@ enum MessageDisplayContent: Equatable, Hashable, Sendable {
                         minithumbnailData: value.photo.minithumbnail?.data,
                         width: max(best.width, 1),
                         height: max(best.height, 1),
-                        caption: value.caption.text,
+                        formattedCaption: FormattedTextContent(tdFormattedText: value.caption),
                         hasSpoiler: value.hasSpoiler,
                         showCaptionAboveMedia: value.showCaptionAboveMedia
                     )
@@ -101,7 +235,7 @@ enum MessageDisplayContent: Equatable, Hashable, Sendable {
                     fileName: value.video.fileName,
                     mimeType: value.video.mimeType,
                     supportsStreaming: value.video.supportsStreaming,
-                    caption: value.caption.text,
+                    formattedCaption: FormattedTextContent(tdFormattedText: value.caption),
                     hasSpoiler: value.hasSpoiler,
                     showCaptionAboveMedia: value.showCaptionAboveMedia
                 )
@@ -130,7 +264,7 @@ enum MessageDisplayContent: Equatable, Hashable, Sendable {
                     duration: value.animation.duration,
                     fileName: value.animation.fileName,
                     mimeType: value.animation.mimeType,
-                    caption: value.caption.text,
+                    formattedCaption: FormattedTextContent(tdFormattedText: value.caption),
                     hasSpoiler: value.hasSpoiler,
                     showCaptionAboveMedia: value.showCaptionAboveMedia
                 )
@@ -144,7 +278,7 @@ enum MessageDisplayContent: Equatable, Hashable, Sendable {
                     minithumbnailData: value.document.minithumbnail?.data,
                     fileName: value.document.fileName,
                     mimeType: value.document.mimeType,
-                    caption: value.caption.text
+                    formattedCaption: FormattedTextContent(tdFormattedText: value.caption)
                 )
             )
 
@@ -156,7 +290,7 @@ enum MessageDisplayContent: Equatable, Hashable, Sendable {
                     mimeType: value.voiceNote.mimeType,
                     waveformLevels: WaveformCodec.decode(value.voiceNote.waveform, targetBars: 36),
                     isListened: value.isListened,
-                    caption: value.caption.text
+                    formattedCaption: FormattedTextContent(tdFormattedText: value.caption)
                 )
             )
 
@@ -171,7 +305,7 @@ enum MessageDisplayContent: Equatable, Hashable, Sendable {
                     performer: value.audio.performer,
                     fileName: value.audio.fileName,
                     mimeType: value.audio.mimeType,
-                    caption: value.caption.text
+                    formattedCaption: FormattedTextContent(tdFormattedText: value.caption)
                 )
             )
 
@@ -200,7 +334,7 @@ enum MessageDisplayContent: Equatable, Hashable, Sendable {
                     )
                 )
             } else {
-                self = .text(value.emoji)
+                self = .text(FormattedTextContent(text: value.emoji))
             }
 
         case .messageLocation(let value):
@@ -225,16 +359,68 @@ enum MessageDisplayContent: Equatable, Hashable, Sendable {
         }
     }
 
-    var captionText: String {
+    var formattedCaption: FormattedTextContent {
         switch self {
-        case .photo(let media): return media.caption
-        case .video(let media): return media.caption
-        case .animation(let media): return media.caption
-        case .document(let media): return media.caption
-        case .voice(let media): return media.caption
-        case .audio(let media): return media.caption
+        case .photo(let media): return media.formattedCaption
+        case .video(let media): return media.formattedCaption
+        case .animation(let media): return media.formattedCaption
+        case .document(let media): return media.formattedCaption
+        case .voice(let media): return media.formattedCaption
+        case .audio(let media): return media.formattedCaption
         case .text, .videoNote, .sticker, .location, .contact, .unsupported:
-            return ""
+            return .empty
+        }
+    }
+
+    var captionText: String {
+        formattedCaption.text
+    }
+
+    var isTextMessage: Bool {
+        if case .text = self { return true }
+        return false
+    }
+
+    var isEditableInComposer: Bool {
+        switch self {
+        case .text, .photo, .video, .animation, .document, .voice, .audio:
+            return true
+        case .videoNote, .sticker, .location, .contact, .unsupported:
+            return false
+        }
+    }
+
+    var editableText: String {
+        switch self {
+        case .text(let formatted):
+            return formatted.text
+        default:
+            return captionText
+        }
+    }
+
+    var showCaptionAboveMedia: Bool {
+        switch self {
+        case .photo(let media): return media.showCaptionAboveMedia
+        case .video(let media): return media.showCaptionAboveMedia
+        case .animation(let media): return media.showCaptionAboveMedia
+        default: return false
+        }
+    }
+
+    var replyThumbnailFile: MediaFileDescriptor? {
+        switch self {
+        case .photo(let media):
+            return media.previewFile ?? media.file
+        case .video(let media):
+            return media.thumbnail?.format.isStaticImage == true ? media.thumbnail?.file : nil
+        case .animation(let media):
+            return media.thumbnail?.format.isStaticImage == true ? media.thumbnail?.file : nil
+        case .sticker(let media):
+            if media.format == .webp { return media.file }
+            return media.thumbnail?.format.isStaticImage == true ? media.thumbnail?.file : nil
+        default:
+            return nil
         }
     }
 
@@ -273,8 +459,8 @@ enum MessageDisplayContent: Equatable, Hashable, Sendable {
 
     var previewText: String {
         switch self {
-        case .text(let text):
-            return text.replacingOccurrences(of: "\n", with: " ")
+        case .text(let formatted):
+            return formatted.text.replacingOccurrences(of: "\n", with: " ")
         case .photo(let media):
             return media.caption.isEmpty ? "[图片]" : "[图片] \(media.caption)"
         case .video(let media):
@@ -312,8 +498,11 @@ struct MessageItem: Identifiable, Equatable, Hashable, Sendable {
     let date: Foundation.Date
     var editDate: Foundation.Date?
     let isOutgoing: Bool
+    var isPinned: Bool
     let sender: MessageSenderKind
     let mediaAlbumId: Int64
+    var replyTo: MessageReplyReference?
+    var forwardInfo: MessageForwardMetadata?
     var content: MessageDisplayContent
     var deliveryStatus: MessageDeliveryStatus
 
@@ -323,8 +512,11 @@ struct MessageItem: Identifiable, Equatable, Hashable, Sendable {
         date: Foundation.Date,
         editDate: Foundation.Date? = nil,
         isOutgoing: Bool,
+        isPinned: Bool = false,
         sender: MessageSenderKind,
         mediaAlbumId: Int64 = 0,
+        replyTo: MessageReplyReference? = nil,
+        forwardInfo: MessageForwardMetadata? = nil,
         content: MessageDisplayContent,
         deliveryStatus: MessageDeliveryStatus = .sent
     ) {
@@ -333,8 +525,11 @@ struct MessageItem: Identifiable, Equatable, Hashable, Sendable {
         self.date = date
         self.editDate = editDate
         self.isOutgoing = isOutgoing
+        self.isPinned = isPinned
         self.sender = sender
         self.mediaAlbumId = mediaAlbumId
+        self.replyTo = replyTo
+        self.forwardInfo = forwardInfo
         self.content = content
         self.deliveryStatus = deliveryStatus
     }
@@ -345,8 +540,11 @@ struct MessageItem: Identifiable, Equatable, Hashable, Sendable {
         self.date = Foundation.Date(timeIntervalSince1970: TimeInterval(tdMessage.date))
         self.editDate = tdMessage.editDate > 0 ? Foundation.Date(timeIntervalSince1970: TimeInterval(tdMessage.editDate)) : nil
         self.isOutgoing = tdMessage.isOutgoing
+        self.isPinned = tdMessage.isPinned
         self.sender = MessageSenderKind(from: tdMessage.senderId)
         self.mediaAlbumId = tdMessage.mediaAlbumId.rawValue
+        self.replyTo = tdMessage.replyTo.map(MessageReplyReference.init(from:))
+        self.forwardInfo = tdMessage.forwardInfo.map(MessageForwardMetadata.init(from:))
         self.content = MessageDisplayContent(from: tdMessage.content)
         self.deliveryStatus = MessageDeliveryStatus(from: tdMessage.sendingState)
     }
@@ -404,6 +602,33 @@ enum ConversationTimelineEntry: Identifiable, Equatable, Hashable, Sendable {
         case .album(_, let messages):
             return messages[messages.count - 1]
         }
+    }
+
+    var allMessages: [MessageItem] {
+        switch self {
+        case .single(let message):
+            return [message]
+        case .album(_, let messages):
+            return messages
+        }
+    }
+
+    var messageIds: [Int64] {
+        allMessages.map(\.id)
+    }
+
+    /// Returns the message that carries editable text/caption for this timeline entry.
+    var editableMessage: MessageItem {
+        switch self {
+        case .single(let message):
+            return message
+        case .album(_, let messages):
+            return messages.first(where: { !$0.content.captionText.isEmpty }) ?? messages[0]
+        }
+    }
+
+    func contains(messageId: Int64) -> Bool {
+        allMessages.contains { $0.id == messageId }
     }
 
     static func group(_ messages: [MessageItem]) -> [ConversationTimelineEntry] {

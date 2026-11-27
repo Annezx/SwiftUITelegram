@@ -85,6 +85,9 @@ struct ChatSummary: Identifiable, Equatable, Hashable, Sendable {
     var isMarkedAsUnread: Bool
     var lastReadInboxMessageId: Int64
     var lastReadOutboxMessageId: Int64
+    var muteFor: Int
+    var canBeDeletedOnlyForSelf: Bool
+    var canBeDeletedForAllUsers: Bool
     var positions: [ChatListFilter: ChatOrderPosition]
 
     init(
@@ -99,6 +102,9 @@ struct ChatSummary: Identifiable, Equatable, Hashable, Sendable {
         isMarkedAsUnread: Bool = false,
         lastReadInboxMessageId: Int64 = 0,
         lastReadOutboxMessageId: Int64 = 0,
+        muteFor: Int = 0,
+        canBeDeletedOnlyForSelf: Bool = true,
+        canBeDeletedForAllUsers: Bool = false,
         positions: [ChatListFilter: ChatOrderPosition] = [:]
     ) {
         self.id = id
@@ -112,6 +118,9 @@ struct ChatSummary: Identifiable, Equatable, Hashable, Sendable {
         self.isMarkedAsUnread = isMarkedAsUnread
         self.lastReadInboxMessageId = lastReadInboxMessageId
         self.lastReadOutboxMessageId = lastReadOutboxMessageId
+        self.muteFor = muteFor
+        self.canBeDeletedOnlyForSelf = canBeDeletedOnlyForSelf
+        self.canBeDeletedForAllUsers = canBeDeletedForAllUsers
         self.positions = positions
     }
 
@@ -131,6 +140,9 @@ struct ChatSummary: Identifiable, Equatable, Hashable, Sendable {
         self.isMarkedAsUnread = tdChat.isMarkedAsUnread
         self.lastReadInboxMessageId = tdChat.lastReadInboxMessageId
         self.lastReadOutboxMessageId = tdChat.lastReadOutboxMessageId
+        self.muteFor = tdChat.notificationSettings.muteFor
+        self.canBeDeletedOnlyForSelf = tdChat.canBeDeletedOnlyForSelf
+        self.canBeDeletedForAllUsers = tdChat.canBeDeletedForAllUsers
 
         var mappedPositions: [ChatListFilter: ChatOrderPosition] = [:]
         for pos in tdChat.positions {
@@ -159,12 +171,28 @@ struct ChatSummary: Identifiable, Equatable, Hashable, Sendable {
         }
     }
 
+    mutating func removeFromList(_ filter: ChatListFilter) {
+        positions.removeValue(forKey: filter)
+    }
+
     func order(in filter: ChatListFilter) -> Int64 {
         positions[filter]?.order ?? 0
     }
 
     func isPinned(in filter: ChatListFilter) -> Bool {
         positions[filter]?.isPinned ?? false
+    }
+
+    var isMuted: Bool {
+        muteFor > 0
+    }
+
+    var isArchived: Bool {
+        order(in: .archive) != 0
+    }
+
+    var hasUnreadIndicator: Bool {
+        unreadCount > 0 || isMarkedAsUnread
     }
 
     var lastMessagePreview: String {

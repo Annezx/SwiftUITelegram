@@ -43,5 +43,7 @@ struct RootView: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
+        .ignoresSafeArea(.all, edges: .top)
+        .background(MainWindowAccessor())
     }
 }

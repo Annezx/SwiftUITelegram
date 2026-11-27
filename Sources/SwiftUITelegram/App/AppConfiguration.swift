@@ -147,7 +147,7 @@ enum AppConfiguration {
 
     static var applicationVersion: String {
         (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)
-            .flatMap { $0.isEmpty ? nil : $0 } ?? "1.0.1"
+            .flatMap { $0.isEmpty ? nil : $0 } ?? "1.1.0"
     }
 
     static var systemVersion: String {

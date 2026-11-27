@@ -31,6 +31,12 @@ struct ChatRowView: View {
                         .font(.body.weight(.medium))
                         .lineLimit(1)
 
+                    if chat.isMuted {
+                        Image(systemName: "speaker.slash.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+
                     Spacer(minLength: 4)
 
                     if let date = chat.lastMessageDate {
@@ -64,6 +70,7 @@ struct ChatRowView: View {
 
     @ViewBuilder
     private var unreadBadge: some View {
+        let badgeColor: Color = chat.isMuted ? Color.secondary.opacity(0.45) : Color.accentColor
         if chat.unreadCount > 0 {
             Text(chat.unreadCount > 999 ? "999+" : "\(chat.unreadCount)")
                 .font(.caption2.weight(.semibold))
@@ -71,10 +78,10 @@ struct ChatRowView: View {
                 .foregroundStyle(.white)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(Color.accentColor, in: Capsule())
+                .background(badgeColor, in: Capsule())
         } else if chat.isMarkedAsUnread {
             Circle()
-                .fill(Color.accentColor)
+                .fill(badgeColor)
                 .frame(width: 9, height: 9)
         }
     }

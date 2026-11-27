@@ -183,6 +183,16 @@ final class TDLibService {
         return result.chatIds
     }
 
+    func searchPublicChat(username: String) async throws -> Chat {
+        let client = try requireClient()
+        return try await client.searchPublicChat(username: username)
+    }
+
+    func createPrivateChat(userId: Int64, force: Bool = false) async throws -> Chat {
+        let client = try requireClient()
+        return try await client.createPrivateChat(force: force, userId: userId)
+    }
+
     func openChat(chatId: Int64) async throws {
         let client = try requireClient()
         _ = try await client.openChat(chatId: chatId)
@@ -191,6 +201,78 @@ final class TDLibService {
     func closeChat(chatId: Int64) async throws {
         let client = try requireClient()
         _ = try await client.closeChat(chatId: chatId)
+    }
+
+    func toggleChatIsPinned(chatList: ChatList, chatId: Int64, isPinned: Bool) async throws {
+        let client = try requireClient()
+        _ = try await client.toggleChatIsPinned(
+            chatId: chatId,
+            chatList: chatList,
+            isPinned: isPinned
+        )
+    }
+
+    func toggleChatIsMarkedAsUnread(chatId: Int64, isMarkedAsUnread: Bool) async throws {
+        let client = try requireClient()
+        _ = try await client.toggleChatIsMarkedAsUnread(
+            chatId: chatId,
+            isMarkedAsUnread: isMarkedAsUnread
+        )
+    }
+
+    func addChatToList(chatId: Int64, chatList: ChatList) async throws {
+        let client = try requireClient()
+        _ = try await client.addChatToList(
+            chatId: chatId,
+            chatList: chatList
+        )
+    }
+
+    func setChatMuteFor(chatId: Int64, muteFor: Int) async throws {
+        let client = try requireClient()
+        let chat = try await client.getChat(chatId: chatId)
+        let current = chat.notificationSettings
+        let updated = ChatNotificationSettings(
+            disableMentionNotifications: current.disableMentionNotifications,
+            disablePinnedMessageNotifications: current.disablePinnedMessageNotifications,
+            muteFor: max(0, muteFor),
+            muteStories: current.muteStories,
+            showPreview: current.showPreview,
+            showStoryPoster: current.showStoryPoster,
+            soundId: current.soundId,
+            storySoundId: current.storySoundId,
+            useDefaultDisableMentionNotifications: current.useDefaultDisableMentionNotifications,
+            useDefaultDisablePinnedMessageNotifications: current.useDefaultDisablePinnedMessageNotifications,
+            useDefaultMuteFor: false,
+            useDefaultMuteStories: current.useDefaultMuteStories,
+            useDefaultShowPreview: current.useDefaultShowPreview,
+            useDefaultShowStoryPoster: current.useDefaultShowStoryPoster,
+            useDefaultSound: current.useDefaultSound,
+            useDefaultStorySound: current.useDefaultStorySound
+        )
+        _ = try await client.setChatNotificationSettings(
+            chatId: chatId,
+            notificationSettings: updated
+        )
+    }
+
+    func deleteChatHistory(chatId: Int64, removeFromChatList: Bool, revoke: Bool) async throws {
+        let client = try requireClient()
+        _ = try await client.deleteChatHistory(
+            chatId: chatId,
+            removeFromChatList: removeFromChatList,
+            revoke: revoke
+        )
+    }
+
+    func leaveChat(chatId: Int64) async throws {
+        let client = try requireClient()
+        _ = try await client.leaveChat(chatId: chatId)
+    }
+
+    func deleteChat(chatId: Int64) async throws {
+        let client = try requireClient()
+        _ = try await client.deleteChat(chatId: chatId)
     }
 
     // MARK: - Messages
@@ -213,7 +295,37 @@ final class TDLibService {
         return result.messages ?? []
     }
 
-    func sendTextMessage(chatId: Int64, text: String) async throws -> Message {
+    func getMessage(chatId: Int64, messageId: Int64) async throws -> Message {
+        let client = try requireClient()
+        return try await client.getMessage(chatId: chatId, messageId: messageId)
+    }
+
+    func getRepliedMessage(chatId: Int64, messageId: Int64) async throws -> Message {
+        let client = try requireClient()
+        return try await client.getRepliedMessage(chatId: chatId, messageId: messageId)
+    }
+
+    func getMessageProperties(chatId: Int64, messageId: Int64) async throws -> MessageProperties {
+        let client = try requireClient()
+        return try await client.getMessageProperties(chatId: chatId, messageId: messageId)
+    }
+
+    static func makeReplyToMessage(messageId: Int64) -> InputMessageReplyTo {
+        .inputMessageReplyToMessage(
+            InputMessageReplyToMessage(
+                checklistTaskId: 0,
+                messageId: messageId,
+                pollOptionId: "",
+                quote: nil
+            )
+        )
+    }
+
+    func sendTextMessage(
+        chatId: Int64,
+        text: String,
+        replyTo: InputMessageReplyTo? = nil
+    ) async throws -> Message {
         let content = InputMessageContent.inputMessageText(
             InputMessageText(
                 clearDraft: true,
@@ -221,25 +333,33 @@ final class TDLibService {
                 text: FormattedText(entities: [], text: text)
             )
         )
-        return try await sendMessage(chatId: chatId, content: content)
+        return try await sendMessage(chatId: chatId, content: content, replyTo: replyTo)
     }
 
-    func sendMessage(chatId: Int64, content: InputMessageContent) async throws -> Message {
+    func sendMessage(
+        chatId: Int64,
+        content: InputMessageContent,
+        replyTo: InputMessageReplyTo? = nil
+    ) async throws -> Message {
         let client = try requireClient()
         return try await client.sendMessage(
             chatId: chatId,
             inputMessageContent: content,
             options: nil,
             replyMarkup: nil,
-            replyTo: nil,
+            replyTo: replyTo,
             topicId: nil
         )
     }
 
-    func sendMessageAlbum(chatId: Int64, contents: [InputMessageContent]) async throws -> [Message] {
+    func sendMessageAlbum(
+        chatId: Int64,
+        contents: [InputMessageContent],
+        replyTo: InputMessageReplyTo? = nil
+    ) async throws -> [Message] {
         guard !contents.isEmpty else { return [] }
         if contents.count == 1 {
-            let msg = try await sendMessage(chatId: chatId, content: contents[0])
+            let msg = try await sendMessage(chatId: chatId, content: contents[0], replyTo: replyTo)
             return [msg]
         }
         let client = try requireClient()
@@ -247,7 +367,7 @@ final class TDLibService {
             chatId: chatId,
             inputMessageContents: contents,
             options: nil,
-            replyTo: nil,
+            replyTo: replyTo,
             topicId: nil
         )
         return result.messages ?? []
@@ -258,7 +378,8 @@ final class TDLibService {
         filePath: String,
         duration: Int,
         waveform: Data,
-        caption: String = ""
+        caption: String = "",
+        replyTo: InputMessageReplyTo? = nil
     ) async throws -> Message {
         let formattedCaption = caption.isEmpty ? nil : FormattedText(entities: [], text: caption)
         let inputVoice = InputVoiceNote(
@@ -273,7 +394,109 @@ final class TDLibService {
                 voiceNote: inputVoice
             )
         )
-        return try await sendMessage(chatId: chatId, content: content)
+        return try await sendMessage(chatId: chatId, content: content, replyTo: replyTo)
+    }
+
+    func editMessageText(chatId: Int64, messageId: Int64, text: String) async throws -> Message {
+        let client = try requireClient()
+        let content = InputMessageContent.inputMessageText(
+            InputMessageText(
+                clearDraft: false,
+                linkPreviewOptions: nil,
+                text: FormattedText(entities: [], text: text)
+            )
+        )
+        return try await client.editMessageText(
+            chatId: chatId,
+            inputMessageContent: content,
+            messageId: messageId,
+            replyMarkup: nil
+        )
+    }
+
+    func editMessageCaption(
+        chatId: Int64,
+        messageId: Int64,
+        caption: String,
+        showCaptionAboveMedia: Bool = false
+    ) async throws -> Message {
+        let client = try requireClient()
+        let formattedCaption = caption.isEmpty ? nil : FormattedText(entities: [], text: caption)
+        return try await client.editMessageCaption(
+            caption: formattedCaption,
+            chatId: chatId,
+            messageId: messageId,
+            replyMarkup: nil,
+            showCaptionAboveMedia: showCaptionAboveMedia
+        )
+    }
+
+    func deleteMessages(chatId: Int64, messageIds: [Int64], revoke: Bool) async throws {
+        guard !messageIds.isEmpty else { return }
+        let client = try requireClient()
+        _ = try await client.deleteMessages(
+            chatId: chatId,
+            messageIds: messageIds,
+            revoke: revoke
+        )
+    }
+
+    func forwardMessages(
+        toChatId: Int64,
+        fromChatId: Int64,
+        messageIds: [Int64],
+        sendCopy: Bool = false,
+        removeCaption: Bool = false
+    ) async throws -> [Message] {
+        guard !messageIds.isEmpty else { return [] }
+        let client = try requireClient()
+        let sortedIds = Array(Set(messageIds)).sorted()
+        let result = try await client.forwardMessages(
+            chatId: toChatId,
+            fromChatId: fromChatId,
+            messageIds: sortedIds,
+            options: nil,
+            removeCaption: sendCopy ? removeCaption : false,
+            sendCopy: sendCopy,
+            topicId: nil
+        )
+        return result.messages ?? []
+    }
+
+    func pinChatMessage(
+        chatId: Int64,
+        messageId: Int64,
+        disableNotification: Bool = false,
+        onlyForSelf: Bool = false
+    ) async throws {
+        let client = try requireClient()
+        _ = try await client.pinChatMessage(
+            chatId: chatId,
+            disableNotification: disableNotification,
+            messageId: messageId,
+            onlyForSelf: onlyForSelf
+        )
+    }
+
+    func unpinChatMessage(chatId: Int64, messageId: Int64) async throws {
+        let client = try requireClient()
+        _ = try await client.unpinChatMessage(
+            chatId: chatId,
+            messageId: messageId
+        )
+    }
+
+    func getMessageLink(chatId: Int64, messageId: Int64, forAlbum: Bool = false) async throws -> MessageLink {
+        let client = try requireClient()
+        return try await client.getMessageLink(
+            chatId: chatId,
+            checklistTaskId: 0,
+            forAlbum: forAlbum,
+            inMessageThread: false,
+            mediaTimestamp: 0,
+            messageId: messageId,
+            pollOptionId: ""
+        )
     }
 
     static func makeInputContent(

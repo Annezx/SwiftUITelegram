@@ -68,8 +68,8 @@
 ## 4. 后续迭代路线图
 
 ### Phase 2 — 富文本、回复与媒体收发
-- [ ] 将 `FormattedText.entities` 解析为 `AttributedString`（粗体、斜体、代码块、链接、剧透、@提及）
-- [ ] 支持消息回复（`InputMessageReplyTo`）、编辑（`editMessageText`）、删除（`deleteMessages`）与转发
+- [x] 将 `FormattedText.entities` 解析为 `AttributedString`（粗体、斜体、代码块、链接、剧透、@提及）
+- [x] 支持消息回复（`InputMessageReplyTo`）、编辑（`editMessageText`）、删除（`deleteMessages`）与转发
 - [x] 支持图片/视频/GIF/音频/文件选取、拖拽、剪贴板 `⌘V` 粘贴与多图相册发送（`InputMessagePhoto` / `InputMessageVideo` / `InputMessageAnimation` / `InputMessageAudio` / `InputMessageDocument` / `sendMessageAlbum`）
 - [x] 图片/视频/GIF 灯箱预览（缩放、键盘切换、`AVKit` 播放）与 `QuickLook` 集成（macOS 原生体验）
 - [x] 语音消息录制（`AVAudioRecorder` + 5-bit 波形编码）与 OGG/Opus 原生播放（零依赖 OGG → Apple CAF 无损重封装 + 波形进度拖拽 + 倍速播放）

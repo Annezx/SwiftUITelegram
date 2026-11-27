@@ -13,8 +13,10 @@ struct ConversationView: View {
     @State private var voiceRecorder = VoiceRecorderManager()
     @State private var lightboxSession: MediaLightboxSession?
     @State private var quickLookURL: URL?
+    @State private var deleteRequest: DeleteMessagesRequest?
+    @State private var forwardRequest: ForwardMessagesRequest?
     @State private var isDropTargeted: Bool = false
-    @State private var pasteEventMonitor: Any?
+    @State private var keyEventMonitor: Any?
 
     private var activeBannerError: String? {
         appStore.conversation.errorMessage
@@ -33,6 +35,24 @@ struct ConversationView: View {
 
             ZStack(alignment: .bottomTrailing) {
                 messageTimeline(entries: entries)
+
+                if let notice = conversation.noticeMessage {
+                    VStack {
+                        Text(notice)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.primary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(.regularMaterial, in: Capsule())
+                            .overlay(Capsule().strokeBorder(.separator.opacity(0.45), lineWidth: 0.5))
+                            .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
+                            .padding(.top, 10)
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity)
+                    .allowsHitTesting(false)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
 
                 if !isNearBottom && !entries.isEmpty {
                     Button {
@@ -53,6 +73,7 @@ struct ConversationView: View {
                 }
             }
             .animation(.easeInOut(duration: 0.18), value: isNearBottom)
+            .animation(.easeInOut(duration: 0.2), value: conversation.noticeMessage)
 
             if let error = activeBannerError {
                 HStack(spacing: 8) {
@@ -79,32 +100,51 @@ struct ConversationView: View {
 
             Divider()
 
-            MessageComposerView(
-                text: $conversation.draftText,
-                pendingAttachments: conversation.pendingAttachments,
-                sendAsDocument: $conversation.sendAsDocument,
-                sendWithSpoiler: $conversation.sendWithSpoiler,
-                hasToggleableOriginalMedia: conversation.hasToggleableOriginalMedia,
-                hasSpoilerCapableMedia: conversation.hasSpoilerCapableMedia,
-                isPreparingAttachments: conversation.isPreparingAttachments,
-                isSending: conversation.isSending,
-                recorder: voiceRecorder,
-                onPickMedia: presentMediaPicker,
-                onPickDocuments: presentDocumentPicker,
-                onPasteClipboardImage: { pasteMediaFromClipboard(onlyWhenNoPlainText: false) },
-                onRemoveAttachment: { id in
-                    conversation.removeAttachment(id: id)
-                },
-                onClearAttachments: {
-                    conversation.clearPendingAttachments()
-                },
-                onSend: {
-                    Task { await conversation.sendCurrentDraft() }
-                },
-                onSendVoiceNote: { recorded in
-                    Task { await conversation.sendVoiceNote(recorded) }
-                }
-            )
+            if conversation.isSelectionMode {
+                selectionActionBar(conversation: conversation)
+            } else {
+                MessageComposerView(
+                    text: $conversation.draftText,
+                    pendingAttachments: conversation.pendingAttachments,
+                    sendAsDocument: $conversation.sendAsDocument,
+                    sendWithSpoiler: $conversation.sendWithSpoiler,
+                    hasToggleableOriginalMedia: conversation.hasToggleableOriginalMedia,
+                    hasSpoilerCapableMedia: conversation.hasSpoilerCapableMedia,
+                    isPreparingAttachments: conversation.isPreparingAttachments,
+                    isSending: conversation.isSending,
+                    composerMode: conversation.composerMode,
+                    composerContextTitle: composerContextTitle(for: conversation.composerMode),
+                    composerContextSubtitle: composerContextSubtitle(for: conversation.composerMode),
+                    composerContextThumbnail: composerContextThumbnail(for: conversation.composerMode),
+                    focusTrigger: conversation.composerFocusTrigger,
+                    recorder: voiceRecorder,
+                    onPickMedia: presentMediaPicker,
+                    onPickDocuments: presentDocumentPicker,
+                    onPasteClipboardImage: { pasteMediaFromClipboard(onlyWhenNoPlainText: false) },
+                    onRemoveAttachment: { id in
+                        conversation.removeAttachment(id: id)
+                    },
+                    onClearAttachments: {
+                        conversation.clearPendingAttachments()
+                    },
+                    onCancelComposerMode: {
+                        conversation.cancelComposerMode()
+                    },
+                    onTapComposerContext: {
+                        if let targetId = conversation.composerMode.replyingMessage?.id
+                            ?? conversation.composerMode.editingMessage?.id
+                        {
+                            Task { await conversation.jumpToMessage(id: targetId) }
+                        }
+                    },
+                    onSend: {
+                        Task { await conversation.sendCurrentDraft() }
+                    },
+                    onSendVoiceNote: { recorded in
+                        Task { await conversation.sendVoiceNote(recorded) }
+                    }
+                )
+            }
         }
         .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
         .overlay {
@@ -125,16 +165,52 @@ struct ConversationView: View {
             )
             .environment(appStore)
         }
+        .sheet(item: $deleteRequest) { request in
+            DeleteMessagesSheet(request: request) { revoke in
+                await appStore.conversation.deleteMessages(request.messageIds, revoke: revoke)
+            }
+        }
+        .sheet(item: $forwardRequest) { request in
+            ForwardMessagesSheet(request: request) { targetChatIds, sendCopy, removeCaption, comment in
+                let ok = await appStore.conversation.forwardMessages(
+                    request.messageIds,
+                    fromChatId: request.fromChatId,
+                    toChatIds: targetChatIds,
+                    sendCopy: sendCopy,
+                    removeCaption: removeCaption,
+                    comment: comment
+                )
+                if ok {
+                    if targetChatIds.count == 1, let singleTarget = targetChatIds.first {
+                        if singleTarget != chat.id {
+                            appStore.chatList.selectedChatId = singleTarget
+                        } else {
+                            appStore.conversation.showTransientNotice("已转发到当前对话")
+                        }
+                    } else if targetChatIds.count > 1 {
+                        appStore.conversation.showTransientNotice("已转发到 \(targetChatIds.count) 个对话")
+                    }
+                }
+                return ok
+            }
+            .environment(appStore)
+        }
         .onAppear {
-            installPasteMonitor()
+            installKeyEventMonitor()
         }
         .onDisappear {
-            removePasteMonitor()
+            removeKeyEventMonitor()
             voiceRecorder.cancelRecording()
         }
         .onChange(of: conversation.scrollToBottomTrigger) { _, _ in
             withAnimation(.snappy(duration: 0.2)) {
                 scrollPosition.scrollTo(edge: .bottom)
+            }
+        }
+        .onChange(of: conversation.scrollToMessageRequest) { _, request in
+            guard let request else { return }
+            withAnimation(.snappy(duration: 0.25)) {
+                scrollPosition.scrollTo(id: request.entryId, anchor: .center)
             }
         }
         .onChange(of: conversation.messages.last?.id) { _, _ in
@@ -144,6 +220,7 @@ struct ConversationView: View {
                 }
             }
         }
+        .ignoresSafeArea(.all, edges: .top)
     }
 
     private var headerBar: some View {
@@ -158,9 +235,17 @@ struct ConversationView: View {
             )
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(chat.title)
-                    .font(.headline)
-                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(chat.title)
+                        .font(.headline)
+                        .lineLimit(1)
+
+                    if chat.isMuted {
+                        Image(systemName: "speaker.slash.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
                 Text(appStore.chatList.subtitle(for: chat))
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -168,6 +253,8 @@ struct ConversationView: View {
             }
 
             Spacer()
+
+            ConnectionStatusBadge(status: appStore.connectionStatus)
 
             if appStore.audioPlayer.isPlaying {
                 HStack(spacing: 6) {
@@ -193,25 +280,73 @@ struct ConversationView: View {
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.vertical, 9)
+        .frame(minHeight: 54)
+        .background(.bar)
+        .contentShape(Rectangle())
+        .gesture(WindowDragGesture())
+    }
+
+    private func selectionActionBar(conversation: ConversationStore) -> some View {
+        let selected = conversation.selectedMessages
+        let canForwardAny = !selected.isEmpty
+        let canDeleteAny = !selected.isEmpty
+
+        return HStack(spacing: 12) {
+            Button("取消") {
+                conversation.exitSelectionMode()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.regular)
+
+            Text("已选择 \(selected.count) 条消息")
+                .font(.callout.weight(.medium))
+                .foregroundStyle(.secondary)
+
+            Spacer()
+
+            Button {
+                presentForwardSheet(for: selected)
+            } label: {
+                Label("转发", systemImage: "arrowshape.turn.up.right")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.regular)
+            .disabled(!canForwardAny)
+
+            Button(role: .destructive) {
+                Task { await presentDeleteSheet(for: selected) }
+            } label: {
+                Label("删除…", systemImage: "trash")
+            }
+            .buttonStyle(.bordered)
+            .tint(.red)
+            .controlSize(.regular)
+            .disabled(!canDeleteAny)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, LayoutMetrics.composerVerticalPadding)
+        .frame(minHeight: LayoutMetrics.bottomBarHeight)
         .background(.bar)
     }
 
     private func messageTimeline(entries: [ConversationTimelineEntry]) -> some View {
-        ScrollView {
+        let conversation = appStore.conversation
+
+        return ScrollView {
             LazyVStack(spacing: 6) {
-                if appStore.conversation.isLoadingOlder {
+                if conversation.isLoadingOlder {
                     ProgressView()
                         .controlSize(.small)
                         .padding(.vertical, 10)
-                } else if !appStore.conversation.hasMoreOlder && !entries.isEmpty {
+                } else if !conversation.hasMoreOlder && !entries.isEmpty {
                     Text("已加载全部历史消息")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                         .padding(.vertical, 10)
                 }
 
-                if appStore.conversation.isLoadingInitial && entries.isEmpty {
+                if conversation.isLoadingInitial && entries.isEmpty {
                     ProgressView("正在加载消息…")
                         .padding(.top, 80)
                 } else if entries.isEmpty {
@@ -234,11 +369,41 @@ struct ConversationView: View {
                                 : nil,
                             isReadByRecipient: entry.tailMessage.isOutgoing
                                 && entry.tailMessage.id <= chat.lastReadOutboxMessageId,
+                            isHighlighted: conversation.highlightedEntryId == entry.id,
+                            isSelectionMode: conversation.isSelectionMode,
+                            isSelected: conversation.isEntrySelected(entry),
                             onOpenLightbox: { messageId in
                                 openLightbox(at: messageId)
                             },
                             onQuickLook: { url in
                                 quickLookURL = url
+                            },
+                            onToggleSelect: {
+                                conversation.toggleSelection(for: entry)
+                            },
+                            onReply: { message in
+                                conversation.beginReply(to: message)
+                            },
+                            onEdit: { message in
+                                conversation.beginEdit(message: message)
+                            },
+                            onForward: { messages in
+                                presentForwardSheet(for: messages)
+                            },
+                            onDelete: { messages in
+                                Task { await presentDeleteSheet(for: messages) }
+                            },
+                            onTogglePin: { message in
+                                Task { await conversation.togglePin(message: message) }
+                            },
+                            onCopyLink: {
+                                Task { await conversation.copyMessageLink(for: entry) }
+                            },
+                            onEnterSelectionMode: {
+                                conversation.enterSelectionMode(with: entry)
+                            },
+                            onJumpToMessage: { messageId in
+                                Task { await conversation.jumpToMessage(id: messageId) }
                             }
                         )
                         .id(entry.id)
@@ -299,6 +464,86 @@ struct ConversationView: View {
         .transition(.opacity)
     }
 
+    // MARK: - Message Action Sheets & Composer Context Helpers
+
+    private func presentForwardSheet(for messages: [MessageItem]) {
+        guard !messages.isEmpty else { return }
+        forwardRequest = ForwardMessagesRequest(
+            fromChatId: chat.id,
+            messages: messages
+        )
+    }
+
+    private func presentDeleteSheet(for messages: [MessageItem]) async {
+        guard !messages.isEmpty else { return }
+
+        var fetchedPermissions: [MessagePermissions] = []
+        for message in messages {
+            if let perms = await appStore.conversation.fetchPermissions(for: message) {
+                fetchedPermissions.append(perms)
+            }
+        }
+
+        let canDeleteForSelf: Bool
+        let canDeleteForAll: Bool
+        if fetchedPermissions.count == messages.count {
+            canDeleteForSelf = fetchedPermissions.allSatisfy(\.canBeDeletedOnlyForSelf)
+            canDeleteForAll = fetchedPermissions.allSatisfy(\.canBeDeletedForAllUsers)
+        } else {
+            canDeleteForSelf = !chat.kind.isChannel
+            canDeleteForAll = messages.allSatisfy(\.isOutgoing)
+        }
+
+        guard canDeleteForSelf || canDeleteForAll else {
+            appStore.conversation.errorMessage = "当前权限无法删除所选消息。"
+            return
+        }
+
+        deleteRequest = DeleteMessagesRequest(
+            chatId: chat.id,
+            chatTitle: chat.title,
+            chatKind: chat.kind,
+            messages: messages,
+            canDeleteForSelf: canDeleteForSelf,
+            canDeleteForAll: canDeleteForAll
+        )
+    }
+
+    private func composerContextTitle(for mode: ComposerMode) -> String? {
+        switch mode {
+        case .normal:
+            return nil
+        case .replying(let message):
+            let name = appStore.chatList.senderDisplayName(for: message.sender)
+                ?? (message.isOutgoing ? (appStore.currentUser?.displayName ?? "我") : chat.title)
+            return "回复 \(name)"
+        case .editing(let message):
+            return message.content.isTextMessage ? "编辑消息" : "编辑说明文字"
+        }
+    }
+
+    private func composerContextSubtitle(for mode: ComposerMode) -> String? {
+        switch mode {
+        case .normal:
+            return nil
+        case .replying(let message):
+            return message.previewText
+        case .editing(let message):
+            return message.previewText
+        }
+    }
+
+    private func composerContextThumbnail(for mode: ComposerMode) -> MediaFileDescriptor? {
+        switch mode {
+        case .normal:
+            return nil
+        case .replying(let message):
+            return message.content.replyThumbnailFile
+        case .editing(let message):
+            return message.content.replyThumbnailFile
+        }
+    }
+
     // MARK: - Media Lightbox & Pickers
 
     private func openLightbox(at messageId: Int64) {
@@ -335,7 +580,7 @@ struct ConversationView: View {
         }
     }
 
-    // MARK: - Drag & Drop and Clipboard Paste
+    // MARK: - Drag & Drop and Keyboard Shortcuts
 
     private func handleDroppedProviders(_ providers: [NSItemProvider]) -> Bool {
         var accepted = false
@@ -410,28 +655,51 @@ struct ConversationView: View {
         return false
     }
 
-    private func installPasteMonitor() {
-        removePasteMonitor()
-        pasteEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            guard flags == .command,
-                  event.charactersIgnoringModifiers?.lowercased() == "v",
-                  lightboxSession == nil,
+    private func installKeyEventMonitor() {
+        removeKeyEventMonitor()
+        keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard lightboxSession == nil,
+                  deleteRequest == nil,
+                  forwardRequest == nil,
                   !voiceRecorder.isRecording
             else {
                 return event
             }
-            if pasteMediaFromClipboard(onlyWhenNoPlainText: true) {
-                return nil
+
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+            // Escape cancels multi-select or active reply/edit mode cleanly.
+            if flags.isEmpty && event.keyCode == 53 {
+                if appStore.conversation.isSelectionMode {
+                    appStore.conversation.exitSelectionMode()
+                    return nil
+                }
+                if appStore.conversation.composerMode != .normal {
+                    appStore.conversation.cancelComposerMode()
+                    return nil
+                }
+                return event
             }
+
+            // ⌘V pastes clipboard images/files unless editing a text message.
+            if flags == .command,
+               event.charactersIgnoringModifiers?.lowercased() == "v",
+               !appStore.conversation.composerMode.isEditing,
+               !appStore.conversation.isSelectionMode
+            {
+                if pasteMediaFromClipboard(onlyWhenNoPlainText: true) {
+                    return nil
+                }
+            }
+
             return event
         }
     }
 
-    private func removePasteMonitor() {
-        if let monitor = pasteEventMonitor {
+    private func removeKeyEventMonitor() {
+        if let monitor = keyEventMonitor {
             NSEvent.removeMonitor(monitor)
-            pasteEventMonitor = nil
+            keyEventMonitor = nil
         }
     }
 

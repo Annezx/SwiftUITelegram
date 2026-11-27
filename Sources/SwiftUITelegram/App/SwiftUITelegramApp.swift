@@ -6,17 +6,23 @@ struct SwiftUITelegramApp: App {
     @State private var appStore = AppStore()
 
     var body: some Scene {
+        let initialSize = MainWindowFrameStore.initialDefaultSize()
+
         WindowGroup("SwiftUITelegram") {
             RootView()
                 .environment(appStore)
-                .frame(minWidth: 820, minHeight: 540)
+                .frame(
+                    minWidth: MainWindowFrameStore.minimumSize.width,
+                    minHeight: MainWindowFrameStore.minimumSize.height
+                )
                 .task {
                     appDelegate.appStore = appStore
                     appStore.bootstrap()
                 }
+                .ignoresSafeArea(.all, edges: .top)
         }
-        .defaultSize(width: 1120, height: 740)
-        .windowToolbarStyle(.unified)
+        .defaultSize(width: initialSize.width, height: initialSize.height)
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandMenu("账号") {
                 ForEach(Array(appStore.persistedAccounts.prefix(9).enumerated()), id: \.element.id) { index, session in

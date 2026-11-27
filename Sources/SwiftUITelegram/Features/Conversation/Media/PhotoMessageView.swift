@@ -5,6 +5,7 @@ struct PhotoMessageView: View {
     @Environment(AppStore.self) private var appStore
 
     let messageId: Int64
+    let isOutgoing: Bool
     let media: PhotoMedia
     let primaryTextColor: Color
     let onOpenLightbox: () -> Void
@@ -104,11 +105,10 @@ struct PhotoMessageView: View {
     }
 
     private var captionText: some View {
-        Text(media.caption)
-            .font(.body)
-            .foregroundStyle(primaryTextColor)
-            .textSelection(.enabled)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: displaySize.width, alignment: .leading)
+        FormattedTextView(
+            content: media.formattedCaption,
+            isOutgoing: isOutgoing
+        )
+        .frame(maxWidth: displaySize.width, alignment: .leading)
     }
 }
