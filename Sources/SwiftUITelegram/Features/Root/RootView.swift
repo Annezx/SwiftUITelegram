@@ -43,5 +43,6 @@ struct RootView: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
+        .toolbarVisibility(.hidden, for: .windowToolbar)
     }
 }

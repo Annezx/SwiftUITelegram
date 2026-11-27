@@ -7,6 +7,8 @@ struct ConversationView: View {
     @Environment(AppStore.self) private var appStore
 
     let chat: ChatSummary
+    var isSidebarHidden: Bool = false
+    var onShowSidebar: (() -> Void)? = nil
 
     @State private var scrollPosition = ScrollPosition(idType: Int64.self)
     @State private var isNearBottom: Bool = true
@@ -220,10 +222,24 @@ struct ConversationView: View {
                 }
             }
         }
+        .ignoresSafeArea(.container, edges: .top)
     }
 
     private var headerBar: some View {
         HStack(spacing: 12) {
+            if isSidebarHidden, let onShowSidebar {
+                Button(action: onShowSidebar) {
+                    Image(systemName: "sidebar.left")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("显示对话列表")
+                .padding(.leading, 68)
+            }
+
             AvatarView(
                 title: chat.title,
                 initials: chat.avatarInitials,
@@ -234,9 +250,17 @@ struct ConversationView: View {
             )
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(chat.title)
-                    .font(.headline)
-                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(chat.title)
+                        .font(.headline)
+                        .lineLimit(1)
+
+                    if chat.isMuted {
+                        Image(systemName: "speaker.slash.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
                 Text(appStore.chatList.subtitle(for: chat))
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -244,6 +268,8 @@ struct ConversationView: View {
             }
 
             Spacer()
+
+            ConnectionStatusBadge(status: appStore.connectionStatus)
 
             if appStore.audioPlayer.isPlaying {
                 HStack(spacing: 6) {
@@ -269,8 +295,11 @@ struct ConversationView: View {
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.vertical, 9)
+        .frame(minHeight: 54)
         .background(.bar)
+        .contentShape(Rectangle())
+        .gesture(WindowDragGesture())
     }
 
     private func selectionActionBar(conversation: ConversationStore) -> some View {
@@ -378,6 +407,12 @@ struct ConversationView: View {
                             },
                             onDelete: { messages in
                                 Task { await presentDeleteSheet(for: messages) }
+                            },
+                            onTogglePin: { message in
+                                Task { await conversation.togglePin(message: message) }
+                            },
+                            onCopyLink: {
+                                Task { await conversation.copyMessageLink(for: entry) }
                             },
                             onEnterSelectionMode: {
                                 conversation.enterSelectionMode(with: entry)

@@ -203,6 +203,78 @@ final class TDLibService {
         _ = try await client.closeChat(chatId: chatId)
     }
 
+    func toggleChatIsPinned(chatList: ChatList, chatId: Int64, isPinned: Bool) async throws {
+        let client = try requireClient()
+        _ = try await client.toggleChatIsPinned(
+            chatId: chatId,
+            chatList: chatList,
+            isPinned: isPinned
+        )
+    }
+
+    func toggleChatIsMarkedAsUnread(chatId: Int64, isMarkedAsUnread: Bool) async throws {
+        let client = try requireClient()
+        _ = try await client.toggleChatIsMarkedAsUnread(
+            chatId: chatId,
+            isMarkedAsUnread: isMarkedAsUnread
+        )
+    }
+
+    func addChatToList(chatId: Int64, chatList: ChatList) async throws {
+        let client = try requireClient()
+        _ = try await client.addChatToList(
+            chatId: chatId,
+            chatList: chatList
+        )
+    }
+
+    func setChatMuteFor(chatId: Int64, muteFor: Int) async throws {
+        let client = try requireClient()
+        let chat = try await client.getChat(chatId: chatId)
+        let current = chat.notificationSettings
+        let updated = ChatNotificationSettings(
+            disableMentionNotifications: current.disableMentionNotifications,
+            disablePinnedMessageNotifications: current.disablePinnedMessageNotifications,
+            muteFor: max(0, muteFor),
+            muteStories: current.muteStories,
+            showPreview: current.showPreview,
+            showStoryPoster: current.showStoryPoster,
+            soundId: current.soundId,
+            storySoundId: current.storySoundId,
+            useDefaultDisableMentionNotifications: current.useDefaultDisableMentionNotifications,
+            useDefaultDisablePinnedMessageNotifications: current.useDefaultDisablePinnedMessageNotifications,
+            useDefaultMuteFor: false,
+            useDefaultMuteStories: current.useDefaultMuteStories,
+            useDefaultShowPreview: current.useDefaultShowPreview,
+            useDefaultShowStoryPoster: current.useDefaultShowStoryPoster,
+            useDefaultSound: current.useDefaultSound,
+            useDefaultStorySound: current.useDefaultStorySound
+        )
+        _ = try await client.setChatNotificationSettings(
+            chatId: chatId,
+            notificationSettings: updated
+        )
+    }
+
+    func deleteChatHistory(chatId: Int64, removeFromChatList: Bool, revoke: Bool) async throws {
+        let client = try requireClient()
+        _ = try await client.deleteChatHistory(
+            chatId: chatId,
+            removeFromChatList: removeFromChatList,
+            revoke: revoke
+        )
+    }
+
+    func leaveChat(chatId: Int64) async throws {
+        let client = try requireClient()
+        _ = try await client.leaveChat(chatId: chatId)
+    }
+
+    func deleteChat(chatId: Int64) async throws {
+        let client = try requireClient()
+        _ = try await client.deleteChat(chatId: chatId)
+    }
+
     // MARK: - Messages
 
     func getChatHistory(
@@ -389,6 +461,42 @@ final class TDLibService {
             topicId: nil
         )
         return result.messages ?? []
+    }
+
+    func pinChatMessage(
+        chatId: Int64,
+        messageId: Int64,
+        disableNotification: Bool = false,
+        onlyForSelf: Bool = false
+    ) async throws {
+        let client = try requireClient()
+        _ = try await client.pinChatMessage(
+            chatId: chatId,
+            disableNotification: disableNotification,
+            messageId: messageId,
+            onlyForSelf: onlyForSelf
+        )
+    }
+
+    func unpinChatMessage(chatId: Int64, messageId: Int64) async throws {
+        let client = try requireClient()
+        _ = try await client.unpinChatMessage(
+            chatId: chatId,
+            messageId: messageId
+        )
+    }
+
+    func getMessageLink(chatId: Int64, messageId: Int64, forAlbum: Bool = false) async throws -> MessageLink {
+        let client = try requireClient()
+        return try await client.getMessageLink(
+            chatId: chatId,
+            checklistTaskId: 0,
+            forAlbum: forAlbum,
+            inMessageThread: false,
+            mediaTimestamp: 0,
+            messageId: messageId,
+            pollOptionId: ""
+        )
     }
 
     static func makeInputContent(

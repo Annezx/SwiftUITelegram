@@ -418,6 +418,71 @@ final class ConversationStore {
         return true
     }
 
+    func canPin(_ entry: ConversationTimelineEntry) -> Bool {
+        let message = entry.leadMessage
+        if let perms = messagePermissions[message.id] {
+            return perms.canBePinned
+        }
+        return false
+    }
+
+    func canCopyLink(_ entry: ConversationTimelineEntry) -> Bool {
+        let message = entry.leadMessage
+        if let perms = messagePermissions[message.id] {
+            return perms.canGetLink
+        }
+        return false
+    }
+
+    func togglePin(message: MessageItem) async {
+        guard let chatId = activeChatId else { return }
+        errorMessage = nil
+        do {
+            if message.isPinned {
+                try await service.unpinChatMessage(chatId: chatId, messageId: message.id)
+                if let index = messages.firstIndex(where: { $0.id == message.id }) {
+                    messages[index].isPinned = false
+                }
+                showTransientNotice("已取消置顶消息")
+            } else {
+                try await service.pinChatMessage(
+                    chatId: chatId,
+                    messageId: message.id,
+                    disableNotification: false,
+                    onlyForSelf: false
+                )
+                if let index = messages.firstIndex(where: { $0.id == message.id }) {
+                    messages[index].isPinned = true
+                }
+                showTransientNotice("已置顶消息")
+            }
+        } catch {
+            errorMessage = TDLibErrorHelper.userFacingMessage(for: error)
+        }
+    }
+
+    func copyMessageLink(for entry: ConversationTimelineEntry) async {
+        guard let chatId = activeChatId else { return }
+        let message = entry.leadMessage
+        let isAlbum: Bool = {
+            if case .album = entry { return true }
+            return false
+        }()
+        errorMessage = nil
+        do {
+            let link = try await service.getMessageLink(
+                chatId: chatId,
+                messageId: message.id,
+                forAlbum: isAlbum
+            )
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(link.link, forType: .string)
+            showTransientNotice("已复制消息链接")
+        } catch {
+            errorMessage = TDLibErrorHelper.userFacingMessage(for: error)
+        }
+    }
+
     func prefetchPermissions(for items: [MessageItem]) {
         guard let chatId = activeChatId else { return }
         let candidates = items.filter { item in
@@ -749,6 +814,12 @@ final class ConversationStore {
             if case .loaded(var replied) = repliedMessages[info.messageId] {
                 replied.editDate = editDate
                 repliedMessages[info.messageId] = .loaded(replied)
+            }
+
+        case .updateMessageIsPinned(let info):
+            guard info.chatId == activeChatId else { return }
+            if let index = messages.firstIndex(where: { $0.id == info.messageId }) {
+                messages[index].isPinned = info.isPinned
             }
 
         case .updateDeleteMessages(let info):

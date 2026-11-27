@@ -129,6 +129,8 @@ struct MessagePermissions: Equatable, Hashable, Sendable {
     let canBeDeletedForAllUsers: Bool
     let canBeForwarded: Bool
     let canBeCopied: Bool
+    let canBePinned: Bool
+    let canGetLink: Bool
 
     var canBeDeleted: Bool {
         canBeDeletedOnlyForSelf || canBeDeletedForAllUsers
@@ -140,7 +142,9 @@ struct MessagePermissions: Equatable, Hashable, Sendable {
         canBeDeletedOnlyForSelf: Bool,
         canBeDeletedForAllUsers: Bool,
         canBeForwarded: Bool,
-        canBeCopied: Bool
+        canBeCopied: Bool,
+        canBePinned: Bool = false,
+        canGetLink: Bool = false
     ) {
         self.canBeReplied = canBeReplied
         self.canBeEdited = canBeEdited
@@ -148,6 +152,8 @@ struct MessagePermissions: Equatable, Hashable, Sendable {
         self.canBeDeletedForAllUsers = canBeDeletedForAllUsers
         self.canBeForwarded = canBeForwarded
         self.canBeCopied = canBeCopied
+        self.canBePinned = canBePinned
+        self.canGetLink = canGetLink
     }
 
     init(from properties: MessageProperties) {
@@ -157,6 +163,8 @@ struct MessagePermissions: Equatable, Hashable, Sendable {
         self.canBeDeletedForAllUsers = properties.canBeDeletedForAllUsers
         self.canBeForwarded = properties.canBeForwarded
         self.canBeCopied = properties.canBeCopied
+        self.canBePinned = properties.canBePinned
+        self.canGetLink = properties.canGetLink
     }
 }
 
@@ -490,6 +498,7 @@ struct MessageItem: Identifiable, Equatable, Hashable, Sendable {
     let date: Foundation.Date
     var editDate: Foundation.Date?
     let isOutgoing: Bool
+    var isPinned: Bool
     let sender: MessageSenderKind
     let mediaAlbumId: Int64
     var replyTo: MessageReplyReference?
@@ -503,6 +512,7 @@ struct MessageItem: Identifiable, Equatable, Hashable, Sendable {
         date: Foundation.Date,
         editDate: Foundation.Date? = nil,
         isOutgoing: Bool,
+        isPinned: Bool = false,
         sender: MessageSenderKind,
         mediaAlbumId: Int64 = 0,
         replyTo: MessageReplyReference? = nil,
@@ -515,6 +525,7 @@ struct MessageItem: Identifiable, Equatable, Hashable, Sendable {
         self.date = date
         self.editDate = editDate
         self.isOutgoing = isOutgoing
+        self.isPinned = isPinned
         self.sender = sender
         self.mediaAlbumId = mediaAlbumId
         self.replyTo = replyTo
@@ -529,6 +540,7 @@ struct MessageItem: Identifiable, Equatable, Hashable, Sendable {
         self.date = Foundation.Date(timeIntervalSince1970: TimeInterval(tdMessage.date))
         self.editDate = tdMessage.editDate > 0 ? Foundation.Date(timeIntervalSince1970: TimeInterval(tdMessage.editDate)) : nil
         self.isOutgoing = tdMessage.isOutgoing
+        self.isPinned = tdMessage.isPinned
         self.sender = MessageSenderKind(from: tdMessage.senderId)
         self.mediaAlbumId = tdMessage.mediaAlbumId.rawValue
         self.replyTo = tdMessage.replyTo.map(MessageReplyReference.init(from:))

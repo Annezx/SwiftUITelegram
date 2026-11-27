@@ -16,7 +16,7 @@ struct SwiftUITelegramApp: App {
                 }
         }
         .defaultSize(width: 1120, height: 740)
-        .windowToolbarStyle(.unified)
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandMenu("账号") {
                 ForEach(Array(appStore.persistedAccounts.prefix(9).enumerated()), id: \.element.id) { index, session in

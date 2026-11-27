@@ -17,6 +17,8 @@ struct MessageBubbleView: View {
     let onEdit: (MessageItem) -> Void
     let onForward: ([MessageItem]) -> Void
     let onDelete: ([MessageItem]) -> Void
+    let onTogglePin: (MessageItem) -> Void
+    let onCopyLink: () -> Void
     let onEnterSelectionMode: () -> Void
     let onJumpToMessage: (Int64) -> Void
 
@@ -55,6 +57,14 @@ struct MessageBubbleView: View {
 
     private var canDelete: Bool {
         appStore.conversation.canDelete(entry)
+    }
+
+    private var canPin: Bool {
+        appStore.conversation.canPin(entry)
+    }
+
+    private var canCopyLink: Bool {
+        appStore.conversation.canCopyLink(entry)
     }
 
     var body: some View {
@@ -554,6 +564,12 @@ struct MessageBubbleView: View {
 
     private func metadataRow(textColor: Color) -> some View {
         HStack(spacing: 4) {
+            if leadMessage.isPinned {
+                Image(systemName: "pin.fill")
+                    .font(.caption2)
+                    .foregroundStyle(textColor)
+            }
+
             if tailMessage.editDate != nil {
                 Text("已编辑")
                     .font(.caption2)
@@ -610,6 +626,17 @@ struct MessageBubbleView: View {
             }
         }
 
+        if canPin {
+            Button {
+                onTogglePin(leadMessage)
+            } label: {
+                Label(
+                    leadMessage.isPinned ? "取消置顶" : "置顶消息",
+                    systemImage: leadMessage.isPinned ? "pin.slash" : "pin"
+                )
+            }
+        }
+
         if canForward {
             Button {
                 onForward(entry.allMessages)
@@ -636,6 +663,14 @@ struct MessageBubbleView: View {
                 NSPasteboard.general.setString(copyable, forType: .string)
             } label: {
                 Label("复制文本", systemImage: "doc.on.doc")
+            }
+        }
+
+        if canCopyLink {
+            Button {
+                onCopyLink()
+            } label: {
+                Label("复制消息链接", systemImage: "link")
             }
         }
 

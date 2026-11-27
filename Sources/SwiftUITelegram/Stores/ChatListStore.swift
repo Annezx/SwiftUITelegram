@@ -301,6 +301,120 @@ final class ChatListStore {
         }
     }
 
+    // MARK: - Chat Context Menu Actions
+
+    func markAsRead(chatId: Int64) async {
+        errorMessage = nil
+        do {
+            if let chat = chatsById[chatId] {
+                if chat.unreadCount > 0, let lastMsgId = chat.lastMessage?.id {
+                    try await service.viewMessages(chatId: chatId, messageIds: [lastMsgId])
+                }
+                if chat.isMarkedAsUnread {
+                    try await service.toggleChatIsMarkedAsUnread(chatId: chatId, isMarkedAsUnread: false)
+                }
+            } else {
+                try await service.toggleChatIsMarkedAsUnread(chatId: chatId, isMarkedAsUnread: false)
+            }
+        } catch {
+            errorMessage = TDLibErrorHelper.userFacingMessage(for: error)
+        }
+    }
+
+    func markAsUnread(chatId: Int64) async {
+        errorMessage = nil
+        do {
+            try await service.toggleChatIsMarkedAsUnread(chatId: chatId, isMarkedAsUnread: true)
+        } catch {
+            errorMessage = TDLibErrorHelper.userFacingMessage(for: error)
+        }
+    }
+
+    func togglePin(chatId: Int64, in filter: ChatListFilter) async {
+        guard let chat = chatsById[chatId] else { return }
+        errorMessage = nil
+        let targetPinned = !chat.isPinned(in: filter)
+        do {
+            try await service.toggleChatIsPinned(
+                chatList: filter.tdChatList,
+                chatId: chatId,
+                isPinned: targetPinned
+            )
+        } catch {
+            errorMessage = TDLibErrorHelper.userFacingMessage(for: error)
+        }
+    }
+
+    func setMute(chatId: Int64, muteFor: Int) async {
+        errorMessage = nil
+        do {
+            try await service.setChatMuteFor(chatId: chatId, muteFor: muteFor)
+            chatsById[chatId]?.muteFor = max(0, muteFor)
+        } catch {
+            errorMessage = TDLibErrorHelper.userFacingMessage(for: error)
+        }
+    }
+
+    func toggleArchive(chatId: Int64) async {
+        guard let chat = chatsById[chatId] else { return }
+        errorMessage = nil
+        let destination: ChatList = chat.isArchived ? .chatListMain : .chatListArchive
+        do {
+            try await service.addChatToList(chatId: chatId, chatList: destination)
+        } catch {
+            errorMessage = TDLibErrorHelper.userFacingMessage(for: error)
+        }
+    }
+
+    @discardableResult
+    func clearHistory(chatId: Int64, revoke: Bool) async -> Bool {
+        errorMessage = nil
+        do {
+            try await service.deleteChatHistory(
+                chatId: chatId,
+                removeFromChatList: false,
+                revoke: revoke
+            )
+            return true
+        } catch {
+            errorMessage = TDLibErrorHelper.userFacingMessage(for: error)
+            return false
+        }
+    }
+
+    @discardableResult
+    func deleteOrLeaveChat(chatId: Int64, revoke: Bool) async -> Bool {
+        guard let chat = chatsById[chatId] else { return false }
+        errorMessage = nil
+        do {
+            switch chat.kind {
+            case .privateUser, .secret:
+                try await service.deleteChatHistory(
+                    chatId: chatId,
+                    removeFromChatList: true,
+                    revoke: revoke
+                )
+            case .basicGroup:
+                try await service.leaveChat(chatId: chatId)
+                _ = try? await service.deleteChatHistory(
+                    chatId: chatId,
+                    removeFromChatList: true,
+                    revoke: false
+                )
+            case .supergroup, .channel:
+                try await service.leaveChat(chatId: chatId)
+            }
+
+            if selectedChatId == chatId {
+                selectedChatId = nil
+            }
+            return true
+        } catch {
+            errorMessage = TDLibErrorHelper.userFacingMessage(for: error)
+            return false
+        }
+    }
+
     // MARK: - TDLib Updates
 
     func handleUpdate(_ update: Update) {
@@ -325,6 +439,14 @@ final class ChatListStore {
 
         case .updateChatPosition(let info):
             chatsById[info.chatId]?.applyPosition(info.position)
+
+        case .updateChatRemovedFromList(let info):
+            if let filter = ChatListFilter(tdChatList: info.chatList) {
+                chatsById[info.chatId]?.removeFromList(filter)
+            }
+
+        case .updateChatNotificationSettings(let info):
+            chatsById[info.chatId]?.muteFor = info.notificationSettings.muteFor
 
         case .updateChatReadInbox(let info):
             chatsById[info.chatId]?.lastReadInboxMessageId = info.lastReadInboxMessageId
