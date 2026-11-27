@@ -6,16 +6,21 @@ struct SwiftUITelegramApp: App {
     @State private var appStore = AppStore()
 
     var body: some Scene {
+        let initialSize = MainWindowFrameStore.initialDefaultSize()
+
         WindowGroup("SwiftUITelegram") {
             RootView()
                 .environment(appStore)
-                .frame(minWidth: 820, minHeight: 540)
+                .frame(
+                    minWidth: MainWindowFrameStore.minimumSize.width,
+                    minHeight: MainWindowFrameStore.minimumSize.height
+                )
                 .task {
                     appDelegate.appStore = appStore
                     appStore.bootstrap()
                 }
         }
-        .defaultSize(width: 1120, height: 740)
+        .defaultSize(width: initialSize.width, height: initialSize.height)
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandMenu("账号") {
@@ -40,6 +45,14 @@ struct SwiftUITelegramApp: App {
                     appStore.triggerSearchFocus()
                 }
                 .keyboardShortcut("k", modifiers: [.command])
+                .disabled(appStore.authStep != .ready)
+
+                Button(appStore.isSidebarVisible ? "隐藏对话列表" : "显示对话列表") {
+                    withAnimation(.snappy(duration: 0.2)) {
+                        appStore.isSidebarVisible.toggle()
+                    }
+                }
+                .keyboardShortcut("s", modifiers: [.command, .control])
                 .disabled(appStore.authStep != .ready)
 
                 Button("刷新会话列表") {

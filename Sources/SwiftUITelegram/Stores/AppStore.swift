@@ -19,6 +19,7 @@ final class AppStore {
 
     var noticeMessage: String?
     var searchFocusTrigger: Int = 0
+    var isSidebarVisible: Bool = true
 
     init(hub: TDLibClientHub = TDLibClientHub()) {
         self.hub = hub

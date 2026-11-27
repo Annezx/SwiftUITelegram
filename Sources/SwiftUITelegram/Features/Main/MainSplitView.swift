@@ -2,33 +2,20 @@ import SwiftUI
 
 struct MainSplitView: View {
     @Environment(AppStore.self) private var appStore
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
-
-    private var isSidebarHidden: Bool {
-        columnVisibility == .detailOnly
-    }
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            ChatListView()
-                .navigationSplitViewColumnWidth(min: 260, ideal: 310, max: 420)
-        } detail: {
-            if let chat = appStore.chatList.selectedChat {
-                ConversationView(
-                    chat: chat,
-                    isSidebarHidden: isSidebarHidden,
-                    onShowSidebar: {
-                        withAnimation(.snappy(duration: 0.2)) {
-                            columnVisibility = .all
-                        }
-                    }
-                )
-                .id(chat.id)
-            } else {
-                emptyDetailView
+        HSplitView {
+            if appStore.isSidebarVisible {
+                ChatListView()
+                    .frame(minWidth: 260, idealWidth: 310, maxWidth: 420)
+                    .layoutPriority(0)
             }
+
+            detailColumn
+                .frame(minWidth: 460, maxWidth: .infinity, maxHeight: .infinity)
+                .layoutPriority(1)
         }
-        .toolbarVisibility(.hidden, for: .windowToolbar)
+        .ignoresSafeArea(.container, edges: .top)
         .onAppear {
             if let selected = appStore.chatList.selectedChatId {
                 appStore.conversation.selectChat(selected)
@@ -39,13 +26,31 @@ struct MainSplitView: View {
         }
     }
 
+    @ViewBuilder
+    private var detailColumn: some View {
+        if let chat = appStore.chatList.selectedChat {
+            ConversationView(
+                chat: chat,
+                isSidebarHidden: !appStore.isSidebarVisible,
+                onShowSidebar: {
+                    withAnimation(.snappy(duration: 0.2)) {
+                        appStore.isSidebarVisible = true
+                    }
+                }
+            )
+            .id(chat.id)
+        } else {
+            emptyDetailView
+        }
+    }
+
     private var emptyDetailView: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                if isSidebarHidden {
+                if !appStore.isSidebarVisible {
                     Button {
                         withAnimation(.snappy(duration: 0.2)) {
-                            columnVisibility = .all
+                            appStore.isSidebarVisible = true
                         }
                     } label: {
                         Image(systemName: "sidebar.left")
@@ -53,7 +58,7 @@ struct MainSplitView: View {
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help("显示侧边栏")
+                    .help("显示对话列表")
                     .padding(.leading, 72)
                 }
 
@@ -62,7 +67,7 @@ struct MainSplitView: View {
                 ConnectionStatusBadge(status: appStore.connectionStatus)
             }
             .padding(.horizontal, 16)
-            .frame(height: 44)
+            .frame(height: 54)
             .contentShape(Rectangle())
             .gesture(WindowDragGesture())
 
@@ -73,6 +78,5 @@ struct MainSplitView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .ignoresSafeArea(.container, edges: .top)
     }
 }

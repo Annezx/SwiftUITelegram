@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ChatListView: View {
@@ -10,6 +11,12 @@ struct ChatListView: View {
         let chats = chatList.visibleChats
 
         VStack(spacing: 0) {
+            // Dedicated top strip keeping native red/yellow/green traffic lights clear and draggable.
+            Color.clear
+                .frame(height: 32)
+                .contentShape(Rectangle())
+                .gesture(WindowDragGesture())
+
             VStack(spacing: 8) {
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass")
@@ -46,7 +53,9 @@ struct ChatListView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
             }
-            .padding(10)
+            .padding(.horizontal, 10)
+            .padding(.top, 4)
+            .padding(.bottom, 10)
 
             Divider()
 
@@ -107,12 +116,14 @@ struct ChatListView: View {
                     }
                 }
                 .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
             }
 
             Divider()
 
             sidebarFooter
         }
+        .background(SidebarMaterialBackground())
         .sheet(item: $confirmationRequest) { request in
             ChatActionConfirmationSheet(request: request) { revoke in
                 switch request.kind {
@@ -278,5 +289,21 @@ struct ChatListView: View {
         .padding(.horizontal, 10)
         .frame(maxWidth: .infinity)
         .frame(height: LayoutMetrics.bottomBarHeight)
+    }
+}
+
+private struct SidebarMaterialBackground: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .sidebar
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        nsView.material = .sidebar
+        nsView.blendingMode = .behindWindow
+        nsView.state = .followsWindowActiveState
     }
 }
