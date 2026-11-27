@@ -20,12 +20,16 @@ struct MediaLightboxItem: Identifiable, Equatable, Hashable {
         }
     }
 
-    var caption: String {
+    var formattedCaption: FormattedTextContent {
         switch kind {
-        case .photo(let media): return media.caption
-        case .video(let media): return media.caption
-        case .animation(let media): return media.caption
+        case .photo(let media): return media.formattedCaption
+        case .video(let media): return media.formattedCaption
+        case .animation(let media): return media.formattedCaption
         }
+    }
+
+    var caption: String {
+        formattedCaption.text
     }
 
     var suggestedFileName: String {
@@ -119,17 +123,18 @@ struct MediaLightboxView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            if let item = currentItem, !item.caption.isEmpty {
+            if let item = currentItem, !item.formattedCaption.isEmpty {
                 Divider()
                 ScrollView {
-                    Text(item.caption)
-                        .font(.body)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 12)
+                    FormattedTextView(
+                        content: item.formattedCaption,
+                        isOutgoing: false
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
                 }
-                .frame(maxHeight: 110)
+                .frame(maxHeight: 120)
                 .background(.bar)
             }
         }

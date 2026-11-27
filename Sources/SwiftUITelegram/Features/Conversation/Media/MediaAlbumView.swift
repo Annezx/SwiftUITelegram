@@ -7,14 +7,15 @@ struct MediaAlbumView: View {
     @Environment(AppStore.self) private var appStore
 
     let messages: [MessageItem]
+    let isOutgoing: Bool
     let primaryTextColor: Color
     let onOpenLightbox: (Int64) -> Void
 
     private let gridWidth: CGFloat = 340
     private let spacing: CGFloat = 3
 
-    private var sharedCaption: String {
-        messages.first(where: { !$0.content.captionText.isEmpty })?.content.captionText ?? ""
+    private var sharedFormattedCaption: FormattedTextContent {
+        messages.first(where: { !$0.content.formattedCaption.isEmpty })?.content.formattedCaption ?? .empty
     }
 
     var body: some View {
@@ -23,13 +24,12 @@ struct MediaAlbumView: View {
                 .frame(width: gridWidth)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-            if !sharedCaption.isEmpty {
-                Text(sharedCaption)
-                    .font(.body)
-                    .foregroundStyle(primaryTextColor)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: gridWidth, alignment: .leading)
+            if !sharedFormattedCaption.isEmpty {
+                FormattedTextView(
+                    content: sharedFormattedCaption,
+                    isOutgoing: isOutgoing
+                )
+                .frame(maxWidth: gridWidth, alignment: .leading)
             }
         }
     }

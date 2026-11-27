@@ -8,6 +8,7 @@ final class ChatListStore {
     private let service: TDLibService
     private var searchTask: Task<Void, Never>?
     private var inFlightUserIds: Set<Int64> = []
+    private var inFlightChatIds: Set<Int64> = []
 
     private(set) var chatsById: [Int64: ChatSummary] = [:]
     private(set) var usersById: [Int64: UserSummary] = [:]
@@ -63,6 +64,19 @@ final class ChatListStore {
             }
     }
 
+    /// All known chats sorted by main-list order then archive-list order, suitable for target pickers such as forwarding.
+    var allSortedChats: [ChatSummary] {
+        chatsById.values.sorted { lhs, rhs in
+            let lhsMain = lhs.order(in: .main)
+            let rhsMain = rhs.order(in: .main)
+            if lhsMain != rhsMain { return lhsMain > rhsMain }
+            let lhsArchive = lhs.order(in: .archive)
+            let rhsArchive = rhs.order(in: .archive)
+            if lhsArchive != rhsArchive { return lhsArchive > rhsArchive }
+            return lhs.id > rhs.id
+        }
+    }
+
     func loadMoreChats(for filter: ChatListFilter? = nil) async {
         let targetFilter = filter ?? selectedFilter
         guard !isLoadingChats, hasReachedEnd[targetFilter] != true else { return }
@@ -116,6 +130,83 @@ final class ChatListStore {
         }
     }
 
+    func searchForwardTargets(query: String) async -> [ChatSummary] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return allSortedChats
+        }
+
+        let localMatches = chatsById.values.filter { chat in
+            chat.title.localizedCaseInsensitiveContains(trimmed)
+        }
+        var merged = Dictionary(uniqueKeysWithValues: localMatches.map { ($0.id, $0) })
+
+        if let ids = try? await service.searchChats(query: trimmed, limit: 30) {
+            for id in ids {
+                if let existing = chatsById[id] {
+                    merged[id] = existing
+                } else if let tdChat = try? await service.getChat(chatId: id) {
+                    let summary = ChatSummary(tdChat: tdChat)
+                    chatsById[tdChat.id] = summary
+                    merged[tdChat.id] = summary
+                }
+            }
+        }
+
+        return merged.values.sorted { lhs, rhs in
+            let lhsOrder = lhs.order(in: .main)
+            let rhsOrder = rhs.order(in: .main)
+            if lhsOrder != rhsOrder { return lhsOrder > rhsOrder }
+            return lhs.id > rhs.id
+        }
+    }
+
+    func ensureSavedMessagesChat(currentUserId: Int64) async -> ChatSummary? {
+        if let existing = chatsById.values.first(where: { chat in
+            if case .privateUser(let userId) = chat.kind {
+                return userId == currentUserId
+            }
+            return false
+        }) {
+            return existing
+        }
+
+        if let tdChat = try? await service.createPrivateChat(userId: currentUserId, force: false) {
+            let summary = ChatSummary(tdChat: tdChat)
+            chatsById[summary.id] = summary
+            return summary
+        }
+        return nil
+    }
+
+    func openChatByUsername(_ username: String) async -> String? {
+        let cleaned = username.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "@"))
+        guard !cleaned.isEmpty else { return nil }
+
+        do {
+            let tdChat = try await service.searchPublicChat(username: cleaned)
+            let summary = ChatSummary(tdChat: tdChat)
+            chatsById[summary.id] = summary
+            selectedChatId = summary.id
+            return nil
+        } catch {
+            return TDLibErrorHelper.userFacingMessage(for: error) ?? "无法打开 @\(cleaned)"
+        }
+    }
+
+    func openPrivateChat(userId: Int64) async -> String? {
+        do {
+            let tdChat = try await service.createPrivateChat(userId: userId, force: false)
+            let summary = ChatSummary(tdChat: tdChat)
+            chatsById[summary.id] = summary
+            selectedChatId = summary.id
+            return nil
+        } catch {
+            return TDLibErrorHelper.userFacingMessage(for: error) ?? "无法打开该用户的对话"
+        }
+    }
+
     func senderDisplayName(for sender: MessageSenderKind) -> String? {
         switch sender {
         case .user(let userId):
@@ -125,7 +216,45 @@ final class ChatListStore {
             ensureUserLoaded(userId: userId)
             return nil
         case .chat(let chatId):
-            return chatsById[chatId]?.title
+            if let chat = chatsById[chatId] {
+                return chat.title
+            }
+            ensureChatLoaded(chatId: chatId)
+            return nil
+        }
+    }
+
+    func originDisplayName(for origin: MessageOriginInfo) -> String {
+        switch origin {
+        case .user(let userId):
+            if let user = usersById[userId] {
+                return user.displayName
+            }
+            ensureUserLoaded(userId: userId)
+            return "用户"
+
+        case .hiddenUser(let senderName):
+            return senderName.isEmpty ? "隐藏用户" : senderName
+
+        case .chat(let chatId, let authorSignature):
+            let base: String
+            if let chat = chatsById[chatId] {
+                base = chat.title
+            } else {
+                ensureChatLoaded(chatId: chatId)
+                base = "群组"
+            }
+            return authorSignature.isEmpty ? base : "\(base) (\(authorSignature))"
+
+        case .channel(let chatId, _, let authorSignature):
+            let base: String
+            if let chat = chatsById[chatId] {
+                base = chat.title
+            } else {
+                ensureChatLoaded(chatId: chatId)
+                base = "频道"
+            }
+            return authorSignature.isEmpty ? base : "\(base) (\(authorSignature))"
         }
     }
 
@@ -156,6 +285,18 @@ final class ChatListStore {
             defer { inFlightUserIds.remove(userId) }
             if let tdUser = try? await service.getUser(userId: userId) {
                 usersById[tdUser.id] = UserSummary(tdUser: tdUser)
+            }
+        }
+    }
+
+    func ensureChatLoaded(chatId: Int64) {
+        guard chatId != 0, chatsById[chatId] == nil, !inFlightChatIds.contains(chatId) else { return }
+        inFlightChatIds.insert(chatId)
+
+        Task {
+            defer { inFlightChatIds.remove(chatId) }
+            if let tdChat = try? await service.getChat(chatId: chatId) {
+                chatsById[tdChat.id] = ChatSummary(tdChat: tdChat)
             }
         }
     }
@@ -209,6 +350,7 @@ final class ChatListStore {
         usersById.removeAll()
         remoteSearchChatIds.removeAll()
         inFlightUserIds.removeAll()
+        inFlightChatIds.removeAll()
         hasReachedEnd.removeAll()
         selectedChatId = nil
         searchQuery = ""

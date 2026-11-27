@@ -93,12 +93,11 @@ struct DocumentMessageView: View {
                 handlePrimaryTap(state: state)
             }
 
-            if !media.caption.isEmpty {
-                Text(media.caption)
-                    .font(.body)
-                    .foregroundStyle(primaryTextColor)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+            if !media.formattedCaption.isEmpty {
+                FormattedTextView(
+                    content: media.formattedCaption,
+                    isOutgoing: isOutgoing
+                )
             }
         }
         .task(id: media.thumbnail?.file.fileId) {

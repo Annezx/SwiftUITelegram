@@ -185,9 +185,11 @@ struct PhotoMedia: Equatable, Hashable, Sendable {
     let minithumbnailData: Data?
     let width: Int
     let height: Int
-    let caption: String
+    let formattedCaption: FormattedTextContent
     let hasSpoiler: Bool
     let showCaptionAboveMedia: Bool
+
+    var caption: String { formattedCaption.text }
 }
 
 struct VideoMedia: Equatable, Hashable, Sendable {
@@ -200,9 +202,11 @@ struct VideoMedia: Equatable, Hashable, Sendable {
     let fileName: String
     let mimeType: String
     let supportsStreaming: Bool
-    let caption: String
+    let formattedCaption: FormattedTextContent
     let hasSpoiler: Bool
     let showCaptionAboveMedia: Bool
+
+    var caption: String { formattedCaption.text }
 }
 
 struct VideoNoteMedia: Equatable, Hashable, Sendable {
@@ -223,9 +227,11 @@ struct AnimationMedia: Equatable, Hashable, Sendable {
     let duration: Int
     let fileName: String
     let mimeType: String
-    let caption: String
+    let formattedCaption: FormattedTextContent
     let hasSpoiler: Bool
     let showCaptionAboveMedia: Bool
+
+    var caption: String { formattedCaption.text }
 
     var isGIFImage: Bool {
         mimeType.lowercased().contains("gif") || fileName.lowercased().hasSuffix(".gif")
@@ -238,7 +244,9 @@ struct DocumentMedia: Equatable, Hashable, Sendable {
     let minithumbnailData: Data?
     let fileName: String
     let mimeType: String
-    let caption: String
+    let formattedCaption: FormattedTextContent
+
+    var caption: String { formattedCaption.text }
 
     var displayFileName: String {
         fileName.isEmpty ? "未命名文件" : fileName
@@ -255,7 +263,9 @@ struct VoiceNoteMedia: Equatable, Hashable, Sendable {
     let mimeType: String
     let waveformLevels: [Float]
     var isListened: Bool
-    let caption: String
+    let formattedCaption: FormattedTextContent
+
+    var caption: String { formattedCaption.text }
 }
 
 struct AudioMedia: Equatable, Hashable, Sendable {
@@ -267,7 +277,9 @@ struct AudioMedia: Equatable, Hashable, Sendable {
     let performer: String
     let fileName: String
     let mimeType: String
-    let caption: String
+    let formattedCaption: FormattedTextContent
+
+    var caption: String { formattedCaption.text }
 
     var displayTitle: String {
         if !title.isEmpty { return title }

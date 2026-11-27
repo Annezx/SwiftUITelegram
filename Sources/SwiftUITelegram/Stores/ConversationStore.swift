@@ -3,11 +3,49 @@ import Foundation
 import Observation
 import TDLibKit
 
+enum ComposerMode: Equatable {
+    case normal
+    case replying(MessageItem)
+    case editing(MessageItem)
+
+    var replyingMessage: MessageItem? {
+        if case .replying(let message) = self { return message }
+        return nil
+    }
+
+    var editingMessage: MessageItem? {
+        if case .editing(let message) = self { return message }
+        return nil
+    }
+
+    var isEditing: Bool {
+        if case .editing = self { return true }
+        return false
+    }
+}
+
+enum RepliedMessageState: Equatable {
+    case loading
+    case loaded(MessageItem)
+    case deleted
+}
+
+struct ScrollToMessageRequest: Equatable {
+    let entryId: Int64
+    let token: Int
+}
+
 @MainActor
 @Observable
 final class ConversationStore {
     private let service: TDLibService
     private var loadTask: Task<Void, Never>?
+    private var highlightClearTask: Task<Void, Never>?
+    private var noticeClearTask: Task<Void, Never>?
+    private var inFlightReplyFetchIds: Set<Int64> = []
+    private var inFlightPermissionIds: Set<Int64> = []
+    private var savedDraftBeforeEditing: String = ""
+    private var scrollToMessageToken: Int = 0
 
     private(set) var activeChatId: Int64?
     private(set) var messages: [MessageItem] = []
@@ -18,11 +56,20 @@ final class ConversationStore {
     private(set) var isPreparingAttachments: Bool = false
     private(set) var pendingAttachments: [PendingAttachment] = []
     private(set) var scrollToBottomTrigger: Int = 0
+    private(set) var composerMode: ComposerMode = .normal
+    private(set) var composerFocusTrigger: Int = 0
+    private(set) var repliedMessages: [Int64: RepliedMessageState] = [:]
+    private(set) var messagePermissions: [Int64: MessagePermissions] = [:]
+    private(set) var highlightedEntryId: Int64?
+    private(set) var scrollToMessageRequest: ScrollToMessageRequest?
+    private(set) var isSelectionMode: Bool = false
+    private(set) var selectedMessageIds: Set<Int64> = []
 
     var draftText: String = ""
     var sendAsDocument: Bool = false
     var sendWithSpoiler: Bool = false
     var errorMessage: String?
+    var noticeMessage: String?
 
     init(service: TDLibService) {
         self.service = service
@@ -33,7 +80,14 @@ final class ConversationStore {
     }
 
     var hasSendableContent: Bool {
-        !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingAttachments.isEmpty
+        if case .editing(let target) = composerMode {
+            let trimmed = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if target.content.isTextMessage {
+                return !trimmed.isEmpty
+            }
+            return true
+        }
+        return !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingAttachments.isEmpty
     }
 
     var hasToggleableOriginalMedia: Bool {
@@ -44,16 +98,37 @@ final class ConversationStore {
         !sendAsDocument && pendingAttachments.contains { $0.supportsSpoiler }
     }
 
+    var selectedMessages: [MessageItem] {
+        messages.filter { selectedMessageIds.contains($0.id) }
+    }
+
+    var selectedEntriesCount: Int {
+        timelineEntries.filter { isEntrySelected($0) }.count
+    }
+
     func selectChat(_ chatId: Int64?) {
         guard activeChatId != chatId else { return }
 
         let previousChatId = activeChatId
         activeChatId = chatId
         loadTask?.cancel()
+        highlightClearTask?.cancel()
+        noticeClearTask?.cancel()
         messages = []
         draftText = ""
+        savedDraftBeforeEditing = ""
+        composerMode = .normal
+        repliedMessages = [:]
+        messagePermissions = [:]
+        inFlightReplyFetchIds = []
+        inFlightPermissionIds = []
+        highlightedEntryId = nil
+        scrollToMessageRequest = nil
+        isSelectionMode = false
+        selectedMessageIds = []
         clearPendingAttachments()
         errorMessage = nil
+        noticeMessage = nil
         hasMoreOlder = true
         isLoadingInitial = false
         isLoadingOlder = false
@@ -102,8 +177,273 @@ final class ConversationStore {
 
             let items = batch.map(MessageItem.init(tdMessage:))
             mergeMessages(items)
+            prefetchPermissions(for: items)
         } catch {
             errorMessage = TDLibErrorHelper.userFacingMessage(for: error)
+        }
+    }
+
+    // MARK: - Reply, Edit & Selection Modes
+
+    func beginReply(to message: MessageItem) {
+        guard activeChatId == message.chatId else { return }
+        if case .editing = composerMode {
+            draftText = savedDraftBeforeEditing
+            savedDraftBeforeEditing = ""
+        }
+        exitSelectionMode()
+        composerMode = .replying(message)
+        composerFocusTrigger += 1
+    }
+
+    func beginEdit(message: MessageItem) {
+        guard activeChatId == message.chatId, message.content.isEditableInComposer else { return }
+        exitSelectionMode()
+        if !composerMode.isEditing {
+            savedDraftBeforeEditing = draftText
+        }
+        composerMode = .editing(message)
+        draftText = message.content.editableText
+        composerFocusTrigger += 1
+    }
+
+    func cancelComposerMode() {
+        if case .editing = composerMode {
+            draftText = savedDraftBeforeEditing
+            savedDraftBeforeEditing = ""
+        }
+        composerMode = .normal
+    }
+
+    func enterSelectionMode(with entry: ConversationTimelineEntry) {
+        cancelComposerMode()
+        isSelectionMode = true
+        selectedMessageIds = Set(entry.messageIds)
+    }
+
+    func toggleSelection(for entry: ConversationTimelineEntry) {
+        guard isSelectionMode else { return }
+        let ids = entry.messageIds
+        if ids.allSatisfy({ selectedMessageIds.contains($0) }) {
+            for id in ids {
+                selectedMessageIds.remove(id)
+            }
+            if selectedMessageIds.isEmpty {
+                isSelectionMode = false
+            }
+        } else {
+            for id in ids {
+                selectedMessageIds.insert(id)
+            }
+        }
+    }
+
+    func isEntrySelected(_ entry: ConversationTimelineEntry) -> Bool {
+        entry.messageIds.allSatisfy { selectedMessageIds.contains($0) }
+    }
+
+    func exitSelectionMode() {
+        isSelectionMode = false
+        selectedMessageIds.removeAll()
+    }
+
+    func insertBotCommand(_ command: String) {
+        if draftText.isEmpty {
+            draftText = command
+        } else if draftText.hasSuffix(" ") || draftText.hasSuffix("\n") {
+            draftText += command
+        } else {
+            draftText += " \(command)"
+        }
+        composerFocusTrigger += 1
+    }
+
+    func showTransientNotice(_ message: String) {
+        noticeClearTask?.cancel()
+        noticeMessage = message
+        noticeClearTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2.4))
+            guard !Task.isCancelled else { return }
+            self?.noticeMessage = nil
+        }
+    }
+
+    // MARK: - Replied Message Lookup & Jump
+
+    func repliedMessageState(for message: MessageItem) -> RepliedMessageState? {
+        guard let reply = message.replyTo,
+              !reply.isStoryReply,
+              reply.chatId == message.chatId,
+              reply.messageId != 0
+        else {
+            return nil
+        }
+
+        if let local = messages.first(where: { $0.id == reply.messageId }) {
+            return .loaded(local)
+        }
+        if let cached = repliedMessages[reply.messageId] {
+            return cached
+        }
+        return .loading
+    }
+
+    func ensureRepliedMessageLoaded(for message: MessageItem) {
+        guard let chatId = activeChatId,
+              let reply = message.replyTo,
+              !reply.isStoryReply,
+              reply.chatId == chatId,
+              reply.messageId != 0
+        else {
+            return
+        }
+
+        let targetId = reply.messageId
+        if messages.contains(where: { $0.id == targetId }) {
+            return
+        }
+        if repliedMessages[targetId] != nil || inFlightReplyFetchIds.contains(targetId) {
+            return
+        }
+
+        inFlightReplyFetchIds.insert(targetId)
+        repliedMessages[targetId] = .loading
+
+        Task {
+            defer { inFlightReplyFetchIds.remove(targetId) }
+            do {
+                let tdReplied = try await service.getRepliedMessage(chatId: chatId, messageId: message.id)
+                guard activeChatId == chatId else { return }
+                repliedMessages[targetId] = .loaded(MessageItem(tdMessage: tdReplied))
+            } catch {
+                guard activeChatId == chatId else { return }
+                if TDLibErrorHelper.isNotFound(error) {
+                    repliedMessages[targetId] = .deleted
+                } else {
+                    repliedMessages.removeValue(forKey: targetId)
+                }
+            }
+        }
+    }
+
+    func jumpToMessage(id targetMessageId: Int64) async {
+        guard let chatId = activeChatId, targetMessageId != 0 else { return }
+
+        if let entry = timelineEntries.first(where: { $0.contains(messageId: targetMessageId) }) {
+            triggerScrollAndHighlight(entryId: entry.id)
+            return
+        }
+
+        // Try loading up to 3 contiguous older pages so timeline pagination stays gap-free.
+        for _ in 0..<3 {
+            guard activeChatId == chatId, hasMoreOlder else { break }
+            await loadOlderMessages()
+            if let entry = timelineEntries.first(where: { $0.contains(messageId: targetMessageId) }) {
+                triggerScrollAndHighlight(entryId: entry.id)
+                return
+            }
+        }
+
+        showTransientNotice("原消息较早，可继续向上滚动历史记录查看。")
+    }
+
+    private func triggerScrollAndHighlight(entryId: Int64) {
+        scrollToMessageToken += 1
+        scrollToMessageRequest = ScrollToMessageRequest(entryId: entryId, token: scrollToMessageToken)
+        highlightedEntryId = entryId
+
+        highlightClearTask?.cancel()
+        highlightClearTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(1500))
+            guard !Task.isCancelled else { return }
+            if self?.highlightedEntryId == entryId {
+                self?.highlightedEntryId = nil
+            }
+        }
+    }
+
+    // MARK: - Message Permissions (TDLib Offline Properties)
+
+    func permissions(for messageId: Int64) -> MessagePermissions? {
+        messagePermissions[messageId]
+    }
+
+    func fetchPermissions(for message: MessageItem) async -> MessagePermissions? {
+        if let cached = messagePermissions[message.id] {
+            return cached
+        }
+        guard message.deliveryStatus == .sent else { return nil }
+        do {
+            let tdProps = try await service.getMessageProperties(chatId: message.chatId, messageId: message.id)
+            let mapped = MessagePermissions(from: tdProps)
+            if activeChatId == message.chatId {
+                messagePermissions[message.id] = mapped
+            }
+            return mapped
+        } catch {
+            return nil
+        }
+    }
+
+    func canReply(to entry: ConversationTimelineEntry) -> Bool {
+        let message = entry.leadMessage
+        if let perms = messagePermissions[message.id] {
+            return perms.canBeReplied
+        }
+        return message.deliveryStatus == .sent
+    }
+
+    func canEdit(_ entry: ConversationTimelineEntry) -> Bool {
+        let target = entry.editableMessage
+        guard target.content.isEditableInComposer else { return false }
+        if let perms = messagePermissions[target.id] {
+            return perms.canBeEdited
+        }
+        return target.isOutgoing && target.deliveryStatus == .sent
+    }
+
+    func canForward(_ entry: ConversationTimelineEntry) -> Bool {
+        let message = entry.leadMessage
+        if let perms = messagePermissions[message.id] {
+            return perms.canBeForwarded
+        }
+        return message.deliveryStatus == .sent
+    }
+
+    func canDelete(_ entry: ConversationTimelineEntry) -> Bool {
+        let message = entry.leadMessage
+        if let perms = messagePermissions[message.id] {
+            return perms.canBeDeleted
+        }
+        return true
+    }
+
+    func prefetchPermissions(for items: [MessageItem]) {
+        guard let chatId = activeChatId else { return }
+        let candidates = items.filter { item in
+            item.deliveryStatus == .sent
+                && messagePermissions[item.id] == nil
+                && !inFlightPermissionIds.contains(item.id)
+        }
+        guard !candidates.isEmpty else { return }
+
+        for item in candidates {
+            inFlightPermissionIds.insert(item.id)
+        }
+
+        Task {
+            defer {
+                for item in candidates {
+                    inFlightPermissionIds.remove(item.id)
+                }
+            }
+            for item in candidates {
+                guard activeChatId == chatId else { return }
+                if let tdProps = try? await service.getMessageProperties(chatId: chatId, messageId: item.id) {
+                    guard activeChatId == chatId else { return }
+                    messagePermissions[item.id] = MessagePermissions(from: tdProps)
+                }
+            }
         }
     }
 
@@ -111,6 +451,9 @@ final class ConversationStore {
 
     func stageAttachmentURLs(_ urls: [URL], forceDocument: Bool = false) {
         guard activeChatId != nil, !urls.isEmpty else { return }
+        if composerMode.isEditing {
+            cancelComposerMode()
+        }
         let targetChatId = activeChatId
         errorMessage = nil
         isPreparingAttachments = true
@@ -135,6 +478,9 @@ final class ConversationStore {
 
     func stagePastedImage(_ image: NSImage) {
         guard activeChatId != nil else { return }
+        if composerMode.isEditing {
+            cancelComposerMode()
+        }
         let targetChatId = activeChatId
         errorMessage = nil
         isPreparingAttachments = true
@@ -173,13 +519,20 @@ final class ConversationStore {
         sendWithSpoiler = false
     }
 
-    // MARK: - Sending Messages & Media
+    // MARK: - Sending, Editing, Deleting & Forwarding Messages
 
     func sendCurrentDraft() async {
         guard let chatId = activeChatId, !isSending else { return }
 
+        if case .editing(let target) = composerMode {
+            await commitEdit(target: target, in: chatId)
+            return
+        }
+
+        let replyTarget = composerMode.replyingMessage
+
         if !pendingAttachments.isEmpty {
-            await sendPendingAttachments(in: chatId)
+            await sendPendingAttachments(in: chatId, replyTarget: replyTarget)
             return
         }
 
@@ -187,24 +540,41 @@ final class ConversationStore {
         guard !trimmed.isEmpty else { return }
 
         let outgoingText = trimmed
+        let tdReplyTo = replyTarget.map { TDLibService.makeReplyToMessage(messageId: $0.id) }
         draftText = ""
+        composerMode = .normal
         errorMessage = nil
         isSending = true
         defer { isSending = false }
 
         do {
-            let sentMessage = try await service.sendTextMessage(chatId: chatId, text: outgoingText)
+            let sentMessage = try await service.sendTextMessage(
+                chatId: chatId,
+                text: outgoingText,
+                replyTo: tdReplyTo
+            )
             guard activeChatId == chatId else { return }
-            upsertMessage(MessageItem(tdMessage: sentMessage))
+            let item = MessageItem(tdMessage: sentMessage)
+            upsertMessage(item)
+            prefetchPermissions(for: [item])
             scrollToBottomTrigger += 1
         } catch {
-            draftText = outgoingText
-            errorMessage = TDLibErrorHelper.userFacingMessage(for: error)
+            if activeChatId == chatId {
+                draftText = outgoingText
+                if let replyTarget {
+                    composerMode = .replying(replyTarget)
+                }
+                errorMessage = TDLibErrorHelper.userFacingMessage(for: error)
+            }
         }
     }
 
     func sendVoiceNote(_ recorded: RecordedVoiceNote) async {
         guard let chatId = activeChatId, !isSending else { return }
+        let replyTarget = composerMode.replyingMessage
+        let tdReplyTo = replyTarget.map { TDLibService.makeReplyToMessage(messageId: $0.id) }
+
+        composerMode = .normal
         errorMessage = nil
         isSending = true
         defer { isSending = false }
@@ -214,13 +584,95 @@ final class ConversationStore {
                 chatId: chatId,
                 filePath: recorded.fileURL.path,
                 duration: recorded.duration,
-                waveform: recorded.waveform
+                waveform: recorded.waveform,
+                replyTo: tdReplyTo
             )
             guard activeChatId == chatId else { return }
-            upsertMessage(MessageItem(tdMessage: sentMessage))
+            let item = MessageItem(tdMessage: sentMessage)
+            upsertMessage(item)
+            prefetchPermissions(for: [item])
             scrollToBottomTrigger += 1
         } catch {
+            if activeChatId == chatId {
+                if let replyTarget {
+                    composerMode = .replying(replyTarget)
+                }
+                errorMessage = TDLibErrorHelper.userFacingMessage(for: error)
+            }
+        }
+    }
+
+    @discardableResult
+    func deleteMessages(_ messageIds: [Int64], revoke: Bool) async -> Bool {
+        guard let chatId = activeChatId, !messageIds.isEmpty else { return false }
+        errorMessage = nil
+
+        do {
+            try await service.deleteMessages(chatId: chatId, messageIds: messageIds, revoke: revoke)
+            guard activeChatId == chatId else { return true }
+            let deletedIds = Set(messageIds)
+            messages.removeAll { deletedIds.contains($0.id) }
+            handleDeletedMessageIds(deletedIds)
+            return true
+        } catch {
             errorMessage = TDLibErrorHelper.userFacingMessage(for: error)
+            return false
+        }
+    }
+
+    @discardableResult
+    func forwardMessages(
+        _ messageIds: [Int64],
+        fromChatId: Int64,
+        toChatIds: [Int64],
+        sendCopy: Bool = false,
+        removeCaption: Bool = false,
+        comment: String = ""
+    ) async -> Bool {
+        guard !messageIds.isEmpty, !toChatIds.isEmpty else { return false }
+        errorMessage = nil
+
+        let trimmedComment = comment.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sortedIds = Array(Set(messageIds)).sorted()
+
+        do {
+            for targetChatId in toChatIds {
+                let forwarded = try await service.forwardMessages(
+                    toChatId: targetChatId,
+                    fromChatId: fromChatId,
+                    messageIds: sortedIds,
+                    sendCopy: sendCopy,
+                    removeCaption: removeCaption
+                )
+
+                if activeChatId == targetChatId {
+                    let mapped = forwarded.map(MessageItem.init(tdMessage:))
+                    for item in mapped {
+                        upsertMessage(item)
+                    }
+                    prefetchPermissions(for: mapped)
+                    scrollToBottomTrigger += 1
+                }
+
+                if !trimmedComment.isEmpty {
+                    let commentMessage = try await service.sendTextMessage(
+                        chatId: targetChatId,
+                        text: trimmedComment
+                    )
+                    if activeChatId == targetChatId {
+                        let item = MessageItem(tdMessage: commentMessage)
+                        upsertMessage(item)
+                        prefetchPermissions(for: [item])
+                        scrollToBottomTrigger += 1
+                    }
+                }
+            }
+
+            exitSelectionMode()
+            return true
+        } catch {
+            errorMessage = TDLibErrorHelper.userFacingMessage(for: error)
+            return false
         }
     }
 
@@ -242,13 +694,23 @@ final class ConversationStore {
             guard info.message.chatId == activeChatId else { return }
             let item = MessageItem(tdMessage: info.message)
             upsertMessage(item)
+            prefetchPermissions(for: [item])
             if !item.isOutgoing {
                 markAsRead(chatId: info.message.chatId, messageIds: [info.message.id])
             }
 
         case .updateMessageSendSucceeded(let info):
             guard info.message.chatId == activeChatId else { return }
-            replaceMessage(oldId: info.oldMessageId, with: MessageItem(tdMessage: info.message))
+            let item = MessageItem(tdMessage: info.message)
+            replaceMessage(oldId: info.oldMessageId, with: item)
+            messagePermissions.removeValue(forKey: info.oldMessageId)
+            if selectedMessageIds.remove(info.oldMessageId) != nil {
+                selectedMessageIds.insert(item.id)
+            }
+            if case .replying(let replyMsg) = composerMode, replyMsg.id == info.oldMessageId {
+                composerMode = .replying(item)
+            }
+            prefetchPermissions(for: [item])
 
         case .updateMessageSendFailed(let info):
             guard info.message.chatId == activeChatId else { return }
@@ -257,8 +719,17 @@ final class ConversationStore {
 
         case .updateMessageContent(let info):
             guard info.chatId == activeChatId else { return }
+            let newDisplayContent = MessageDisplayContent(from: info.newContent)
             if let index = messages.firstIndex(where: { $0.id == info.messageId }) {
-                messages[index].content = MessageDisplayContent(from: info.newContent)
+                messages[index].content = newDisplayContent
+            }
+            if case .loaded(var replied) = repliedMessages[info.messageId] {
+                replied.content = newDisplayContent
+                repliedMessages[info.messageId] = .loaded(replied)
+            }
+            if case .replying(var target) = composerMode, target.id == info.messageId {
+                target.content = newDisplayContent
+                composerMode = .replying(target)
             }
 
         case .updateMessageContentOpened(let info):
@@ -269,16 +740,22 @@ final class ConversationStore {
 
         case .updateMessageEdited(let info):
             guard info.chatId == activeChatId else { return }
+            let editDate = info.editDate > 0
+                ? Foundation.Date(timeIntervalSince1970: TimeInterval(info.editDate))
+                : nil
             if let index = messages.firstIndex(where: { $0.id == info.messageId }) {
-                messages[index].editDate = info.editDate > 0
-                    ? Foundation.Date(timeIntervalSince1970: TimeInterval(info.editDate))
-                    : nil
+                messages[index].editDate = editDate
+            }
+            if case .loaded(var replied) = repliedMessages[info.messageId] {
+                replied.editDate = editDate
+                repliedMessages[info.messageId] = .loaded(replied)
             }
 
         case .updateDeleteMessages(let info):
-            guard info.chatId == activeChatId, info.isPermanent else { return }
+            guard info.chatId == activeChatId, !info.fromCache else { return }
             let deletedIds = Set(info.messageIds)
             messages.removeAll { deletedIds.contains($0.id) }
+            handleDeletedMessageIds(deletedIds)
 
         default:
             break
@@ -287,11 +764,24 @@ final class ConversationStore {
 
     func reset() {
         loadTask?.cancel()
+        highlightClearTask?.cancel()
+        noticeClearTask?.cancel()
         activeChatId = nil
         messages = []
         draftText = ""
+        savedDraftBeforeEditing = ""
+        composerMode = .normal
+        repliedMessages = [:]
+        messagePermissions = [:]
+        inFlightReplyFetchIds = []
+        inFlightPermissionIds = []
+        highlightedEntryId = nil
+        scrollToMessageRequest = nil
+        isSelectionMode = false
+        selectedMessageIds = []
         clearPendingAttachments()
         errorMessage = nil
+        noticeMessage = nil
         hasMoreOlder = true
         isLoadingInitial = false
         isLoadingOlder = false
@@ -299,19 +789,70 @@ final class ConversationStore {
         isPreparingAttachments = false
     }
 
-    // MARK: - Private Media Dispatch
+    // MARK: - Private Edit & Media Dispatch
 
-    private func sendPendingAttachments(in chatId: Int64) async {
+    private func commitEdit(target: MessageItem, in chatId: Int64) async {
+        let trimmed = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if target.content.isTextMessage && trimmed.isEmpty {
+            return
+        }
+
+        let originalTrimmed = target.content.editableText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed == originalTrimmed {
+            cancelComposerMode()
+            return
+        }
+
+        errorMessage = nil
+        isSending = true
+        defer { isSending = false }
+
+        do {
+            let edited: Message
+            if target.content.isTextMessage {
+                edited = try await service.editMessageText(
+                    chatId: chatId,
+                    messageId: target.id,
+                    text: trimmed
+                )
+            } else {
+                edited = try await service.editMessageCaption(
+                    chatId: chatId,
+                    messageId: target.id,
+                    caption: trimmed,
+                    showCaptionAboveMedia: target.content.showCaptionAboveMedia
+                )
+            }
+
+            guard activeChatId == chatId else { return }
+            let updatedItem = MessageItem(tdMessage: edited)
+            upsertMessage(updatedItem)
+            if repliedMessages[updatedItem.id] != nil {
+                repliedMessages[updatedItem.id] = .loaded(updatedItem)
+            }
+            composerMode = .normal
+            draftText = savedDraftBeforeEditing
+            savedDraftBeforeEditing = ""
+        } catch {
+            if activeChatId == chatId {
+                errorMessage = TDLibErrorHelper.userFacingMessage(for: error)
+            }
+        }
+    }
+
+    private func sendPendingAttachments(in chatId: Int64, replyTarget: MessageItem?) async {
         let attachments = pendingAttachments
         let caption = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         let asDocument = sendAsDocument
         let spoiler = sendWithSpoiler && !asDocument
+        let tdReplyTo = replyTarget.map { TDLibService.makeReplyToMessage(messageId: $0.id) }
 
         // Keep staged files on disk because TDLib uploads asynchronously in the background.
         pendingAttachments = []
         draftText = ""
         sendAsDocument = false
         sendWithSpoiler = false
+        composerMode = .normal
         errorMessage = nil
         isSending = true
         defer { isSending = false }
@@ -334,7 +875,11 @@ final class ConversationStore {
                             hasSpoiler: spoiler
                         )
                     }
-                    let batch = try await service.sendMessageAlbum(chatId: chatId, contents: contents)
+                    let batch = try await service.sendMessageAlbum(
+                        chatId: chatId,
+                        contents: contents,
+                        replyTo: offset == 0 ? tdReplyTo : nil
+                    )
                     sentMessages.append(contentsOf: batch)
                     offset = end
                 }
@@ -347,15 +892,21 @@ final class ConversationStore {
                         sendAsDocument: asDocument,
                         hasSpoiler: spoiler
                     )
-                    let msg = try await service.sendMessage(chatId: chatId, content: content)
+                    let msg = try await service.sendMessage(
+                        chatId: chatId,
+                        content: content,
+                        replyTo: index == 0 ? tdReplyTo : nil
+                    )
                     sentMessages.append(msg)
                 }
             }
 
             guard activeChatId == chatId else { return }
-            for msg in sentMessages {
-                upsertMessage(MessageItem(tdMessage: msg))
+            let mapped = sentMessages.map(MessageItem.init(tdMessage:))
+            for item in mapped {
+                upsertMessage(item)
             }
+            prefetchPermissions(for: mapped)
             scrollToBottomTrigger += 1
         } catch {
             if activeChatId == chatId {
@@ -363,8 +914,32 @@ final class ConversationStore {
                 draftText = caption
                 sendAsDocument = asDocument
                 sendWithSpoiler = spoiler
+                if let replyTarget {
+                    composerMode = .replying(replyTarget)
+                }
                 errorMessage = TDLibErrorHelper.userFacingMessage(for: error)
             }
+        }
+    }
+
+    private func handleDeletedMessageIds(_ deletedIds: Set<Int64>) {
+        for id in deletedIds {
+            messagePermissions.removeValue(forKey: id)
+            selectedMessageIds.remove(id)
+            if repliedMessages[id] != nil {
+                repliedMessages[id] = .deleted
+            }
+        }
+        if isSelectionMode && selectedMessageIds.isEmpty {
+            isSelectionMode = false
+        }
+        switch composerMode {
+        case .replying(let target) where deletedIds.contains(target.id):
+            composerMode = .normal
+        case .editing(let target) where deletedIds.contains(target.id):
+            cancelComposerMode()
+        default:
+            break
         }
     }
 
@@ -428,6 +1003,7 @@ final class ConversationStore {
 
             let items = collected.map(MessageItem.init(tdMessage:))
             mergeMessages(items)
+            prefetchPermissions(for: items)
             scrollToBottomTrigger += 1
 
             let unreadIncomingIds = messages.suffix(20).filter { !$0.isOutgoing }.map(\.id)

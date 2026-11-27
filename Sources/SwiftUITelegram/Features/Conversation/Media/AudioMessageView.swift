@@ -87,12 +87,11 @@ struct AudioMessageView: View {
             }
             .frame(minWidth: 245, maxWidth: 340, alignment: .leading)
 
-            if !media.caption.isEmpty {
-                Text(media.caption)
-                    .font(.body)
-                    .foregroundStyle(primaryTextColor)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+            if !media.formattedCaption.isEmpty {
+                FormattedTextView(
+                    content: media.formattedCaption,
+                    isOutgoing: isOutgoing
+                )
             }
         }
         .task(id: media.albumCoverThumbnail?.file.fileId) {

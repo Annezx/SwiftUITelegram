@@ -25,9 +25,11 @@
   - **语音与音频播放**：内建零依赖纯 Swift OGG/Opus → Apple CAF 容器重封装器，支持直接播放 Telegram 语音消息、可点击拖拽的 5-bit 波形进度条、音乐封面展示及 `1x / 1.5x / 2x` 倍速切换
   - **语音录制与多媒体发送**：支持麦克风录制语音消息并生成波形；支持选择器、`Finder` 拖拽、`⌘V` 粘贴剪贴板图片/文件、多附件暂存条、自动相册打包（`sendMessageAlbum`）、「以原文件发送」与「剧透模糊」开关
   - **原生 macOS 预览与导出**：内置媒体灯箱（图片缩放、`AVKit` 视频播放、`←`/`→` 切换）、系统 `Quick Look` 预览、复制图片、另存为（`NSSavePanel`）与「在 Finder 中显示」
-- **现代 SwiftUI (macOS 15+) 消息时间线**
+- **现代 SwiftUI (macOS 15+) 消息时间线与富文本交互**
   - 使用 `ScrollPosition` + `.defaultScrollAnchor(.bottom)` + `.onScrollGeometryChange` 实现底部锚定、上滑自动分页加载历史消息与「回到底部」悬浮按钮
-  - 实时收发文本与多媒体消息、已编辑标记、发送中 / 已读状态回执、右键菜单
+  - 完整解析 `FormattedText.entities`（UTF-16 精确映射）：粗体、斜体、下划线、删除线、行内代码、带语言标签与一键复制的代码块卡片、引用块、可点击链接、剧透点击展开、`@提及` / 用户提及直达对话
+  - 完整消息交互：消息回复（`InputMessageReplyTo`、引用预览条与点击跳转高亮原消息）、消息编辑（`editMessageText` / `editMessageCaption`）、按 TDLib 权限区分仅自己/双向撤回的删除确认（`deleteMessages`）、支持搜索与多目标/隐藏来源/附言的转发弹窗（`forwardMessages`）及多选批量操作
+  - 实时收发文本与多媒体消息、已编辑标记、发送中 / 已读状态回执、悬浮快捷操作与右键菜单
   - 原生 macOS `Settings` 窗口（`⌘,`）、媒体缓存清理与优雅退出清理 TDLib 数据库
 
 详细的架构设计与后续路线图请参阅 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。

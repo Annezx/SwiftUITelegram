@@ -2,6 +2,8 @@ import AppKit
 import SwiftUI
 
 struct MessageComposerView: View {
+    @Environment(AppStore.self) private var appStore
+
     @Binding var text: String
     let pendingAttachments: [PendingAttachment]
     @Binding var sendAsDocument: Bool
@@ -10,6 +12,11 @@ struct MessageComposerView: View {
     let hasSpoilerCapableMedia: Bool
     let isPreparingAttachments: Bool
     let isSending: Bool
+    let composerMode: ComposerMode
+    let composerContextTitle: String?
+    let composerContextSubtitle: String?
+    let composerContextThumbnail: MediaFileDescriptor?
+    let focusTrigger: Int
     let recorder: VoiceRecorderManager
 
     let onPickMedia: () -> Void
@@ -17,18 +24,51 @@ struct MessageComposerView: View {
     let onPasteClipboardImage: () -> Void
     let onRemoveAttachment: (UUID) -> Void
     let onClearAttachments: () -> Void
+    let onCancelComposerMode: () -> Void
+    let onTapComposerContext: () -> Void
     let onSend: () -> Void
     let onSendVoiceNote: (RecordedVoiceNote) -> Void
 
+    @FocusState private var isTextFieldFocused: Bool
+
     private var canSend: Bool {
-        (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingAttachments.isEmpty)
+        if case .editing(let target) = composerMode {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if target.content.isTextMessage {
+                return !trimmed.isEmpty && !isSending
+            }
+            return !isSending
+        }
+        return (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingAttachments.isEmpty)
             && !isSending
             && !isPreparingAttachments
     }
 
+    private var placeholderText: String {
+        switch composerMode {
+        case .editing(let target):
+            return target.content.isTextMessage
+                ? "编辑消息…（Enter 保存，Esc 取消）"
+                : "编辑说明文字…（留空可清除，Enter 保存）"
+        case .replying:
+            return pendingAttachments.isEmpty
+                ? "输入回复内容…（Enter 发送，Esc 取消）"
+                : "添加回复说明文字…（Enter 发送）"
+        case .normal:
+            return pendingAttachments.isEmpty
+                ? "输入消息…（Enter 发送，Option+Enter 换行）"
+                : "添加说明文字…（Enter 发送，Option+Enter 换行）"
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            if !recorder.isRecording && (!pendingAttachments.isEmpty || isPreparingAttachments) {
+            if !recorder.isRecording && composerMode != .normal {
+                composerContextBar
+                Divider()
+            }
+
+            if !recorder.isRecording && !composerMode.isEditing && (!pendingAttachments.isEmpty || isPreparingAttachments) {
                 attachmentStagingBar
                 Divider()
             }
@@ -40,6 +80,72 @@ struct MessageComposerView: View {
             }
         }
         .background(.bar)
+        .onChange(of: focusTrigger) { _, _ in
+            isTextFieldFocused = true
+        }
+    }
+
+    // MARK: - Reply / Edit Context Banner
+
+    private var composerContextBar: some View {
+        let accent: Color = composerMode.isEditing ? .orange : .accentColor
+
+        return HStack(spacing: 10) {
+            Image(systemName: composerMode.isEditing ? "pencil" : "arrowshape.turn.up.left")
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(accent)
+                .frame(width: 20)
+
+            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                .fill(accent)
+                .frame(width: 2.5, height: 30)
+
+            if let thumb = composerContextThumbnail,
+               let image = appStore.fileCache.image(for: thumb)
+            {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 30, height: 30)
+                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            }
+
+            VStack(alignment: .leading, spacing: 1.5) {
+                Text(composerContextTitle ?? (composerMode.isEditing ? "编辑消息" : "回复消息"))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(accent)
+                    .lineLimit(1)
+
+                if let subtitle = composerContextSubtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                onTapComposerContext()
+            }
+
+            Button {
+                onCancelComposerMode()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("取消 (Esc)")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .task(id: composerContextThumbnail?.fileId) {
+            if let thumb = composerContextThumbnail {
+                appStore.fileCache.ensureDownloaded(thumb, priority: 14)
+            }
+        }
     }
 
     // MARK: - Attachment Staging Bar
@@ -110,20 +216,21 @@ struct MessageComposerView: View {
 
     private var inputRow: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            AttachmentMenuButton(
-                isDisabled: isSending,
-                onPickMedia: onPickMedia,
-                onPickDocuments: onPickDocuments,
-                onPasteClipboardImage: onPasteClipboardImage
-            )
+            if !composerMode.isEditing {
+                AttachmentMenuButton(
+                    isDisabled: isSending,
+                    onPickMedia: onPickMedia,
+                    onPickDocuments: onPickDocuments,
+                    onPasteClipboardImage: onPasteClipboardImage
+                )
+            }
 
             TextField(
-                pendingAttachments.isEmpty
-                    ? "输入消息…（Enter 发送，Option+Enter 换行）"
-                    : "添加说明文字…（Enter 发送，Option+Enter 换行）",
+                placeholderText,
                 text: $text,
                 axis: .vertical
             )
+            .focused($isTextFieldFocused)
             .textFieldStyle(.plain)
             .lineLimit(1...6)
             .padding(.horizontal, 12)
@@ -135,7 +242,10 @@ struct MessageComposerView: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: LayoutMetrics.composerControlHeight / 2, style: .continuous)
-                    .strokeBorder(.separator.opacity(0.6), lineWidth: 1)
+                    .strokeBorder(
+                        composerMode.isEditing ? Color.orange.opacity(0.55) : Color.secondary.opacity(0.25),
+                        lineWidth: 1
+                    )
             )
             .onSubmit {
                 if canSend {
@@ -143,7 +253,26 @@ struct MessageComposerView: View {
                 }
             }
 
-            if canSend || isSending {
+            if composerMode.isEditing {
+                Button {
+                    onSend()
+                } label: {
+                    Group {
+                        if isSending {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 26))
+                        }
+                    }
+                    .frame(width: LayoutMetrics.composerControlHeight, height: LayoutMetrics.composerControlHeight)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(canSend ? Color.orange : Color.secondary.opacity(0.4))
+                .disabled(!canSend)
+                .help("保存修改 (Enter)")
+            } else if canSend || isSending {
                 Button {
                     onSend()
                 } label: {
