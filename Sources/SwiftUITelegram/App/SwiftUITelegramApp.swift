@@ -55,6 +55,32 @@ struct SwiftUITelegramApp: App {
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
                 .disabled(appStore.authStep != .ready)
+
+                Divider()
+
+                Button("上一个文件夹") {
+                    appStore.chatList.selectPreviousTab()
+                }
+                .keyboardShortcut("[", modifiers: [.command, .option])
+                .disabled(appStore.authStep != .ready)
+
+                Button("下一个文件夹") {
+                    appStore.chatList.selectNextTab()
+                }
+                .keyboardShortcut("]", modifiers: [.command, .option])
+                .disabled(appStore.authStep != .ready)
+
+                Divider()
+
+                Button("新建文件夹…") {
+                    appStore.triggerCreateFolder()
+                }
+                .disabled(appStore.authStep != .ready)
+
+                Button("管理文件夹…") {
+                    appStore.triggerManageFolders()
+                }
+                .disabled(appStore.authStep != .ready)
             }
         }
 

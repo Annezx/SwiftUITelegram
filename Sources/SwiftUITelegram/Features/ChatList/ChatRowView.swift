@@ -3,6 +3,7 @@ import SwiftUI
 struct ChatRowView: View {
     let chat: ChatSummary
     let isPinned: Bool
+    var folderTags: [ChatFolderItem] = []
 
     var body: some View {
         HStack(spacing: 10) {
@@ -63,9 +64,41 @@ struct ChatRowView: View {
 
                     unreadBadge
                 }
+
+                if !folderTags.isEmpty {
+                    folderTagStrip
+                }
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private var folderTagStrip: some View {
+        let visibleTags = Array(folderTags.prefix(3))
+        let overflowCount = max(0, folderTags.count - visibleTags.count)
+
+        return HStack(spacing: 4) {
+            ForEach(visibleTags) { folder in
+                let tint = ChatFolderColorPalette.color(for: folder.colorId) ?? Color.accentColor
+                Text(folder.title)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(tint)
+                    .lineLimit(1)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+            }
+
+            if overflowCount > 0 {
+                Text("+\(overflowCount)")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+            }
+        }
+        .padding(.top, 1)
     }
 
     @ViewBuilder
