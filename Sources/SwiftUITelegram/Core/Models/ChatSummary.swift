@@ -1,34 +1,59 @@
 import Foundation
 import TDLibKit
 
-enum ChatListFilter: String, CaseIterable, Identifiable, Hashable, Sendable {
+enum ChatListFilter: Identifiable, Hashable, Sendable {
     case main
     case archive
+    case folder(Int)
 
-    var id: String { rawValue }
-
-    var title: String {
+    var id: String {
         switch self {
-        case .main: return "全部对话"
-        case .archive: return "已归档"
+        case .main:
+            return "main"
+        case .archive:
+            return "archive"
+        case .folder(let folderId):
+            return "folder_\(folderId)"
+        }
+    }
+
+    var folderId: Int? {
+        if case .folder(let id) = self {
+            return id
+        }
+        return nil
+    }
+
+    var defaultTitle: String {
+        switch self {
+        case .main:
+            return "全部对话"
+        case .archive:
+            return "已归档"
+        case .folder(let folderId):
+            return "文件夹 \(folderId)"
         }
     }
 
     var tdChatList: ChatList {
         switch self {
-        case .main: return .chatListMain
-        case .archive: return .chatListArchive
+        case .main:
+            return .chatListMain
+        case .archive:
+            return .chatListArchive
+        case .folder(let folderId):
+            return .chatListFolder(ChatListFolder(chatFolderId: folderId))
         }
     }
 
-    init?(tdChatList: ChatList) {
+    init(tdChatList: ChatList) {
         switch tdChatList {
         case .chatListMain:
             self = .main
         case .chatListArchive:
             self = .archive
-        case .chatListFolder:
-            return nil
+        case .chatListFolder(let folder):
+            self = .folder(folder.chatFolderId)
         }
     }
 }
@@ -89,6 +114,7 @@ struct ChatSummary: Identifiable, Equatable, Hashable, Sendable {
     var canBeDeletedOnlyForSelf: Bool
     var canBeDeletedForAllUsers: Bool
     var positions: [ChatListFilter: ChatOrderPosition]
+    var chatLists: Set<ChatListFilter>
 
     init(
         id: Int64,
@@ -105,7 +131,8 @@ struct ChatSummary: Identifiable, Equatable, Hashable, Sendable {
         muteFor: Int = 0,
         canBeDeletedOnlyForSelf: Bool = true,
         canBeDeletedForAllUsers: Bool = false,
-        positions: [ChatListFilter: ChatOrderPosition] = [:]
+        positions: [ChatListFilter: ChatOrderPosition] = [:],
+        chatLists: Set<ChatListFilter> = []
     ) {
         self.id = id
         self.title = title
@@ -122,6 +149,7 @@ struct ChatSummary: Identifiable, Equatable, Hashable, Sendable {
         self.canBeDeletedOnlyForSelf = canBeDeletedOnlyForSelf
         self.canBeDeletedForAllUsers = canBeDeletedForAllUsers
         self.positions = positions
+        self.chatLists = chatLists
     }
 
     init(tdChat: Chat) {
@@ -146,11 +174,13 @@ struct ChatSummary: Identifiable, Equatable, Hashable, Sendable {
 
         var mappedPositions: [ChatListFilter: ChatOrderPosition] = [:]
         for pos in tdChat.positions {
-            if let filter = ChatListFilter(tdChatList: pos.list), pos.order.rawValue != 0 {
+            let filter = ChatListFilter(tdChatList: pos.list)
+            if pos.order.rawValue != 0 {
                 mappedPositions[filter] = ChatOrderPosition(isPinned: pos.isPinned, order: pos.order.rawValue)
             }
         }
         self.positions = mappedPositions
+        self.chatLists = Set(tdChat.chatLists.map(ChatListFilter.init(tdChatList:)))
     }
 
     mutating func applyPositions(_ tdPositions: [ChatPosition]) {
@@ -160,7 +190,7 @@ struct ChatSummary: Identifiable, Equatable, Hashable, Sendable {
     }
 
     mutating func applyPosition(_ tdPosition: ChatPosition) {
-        guard let filter = ChatListFilter(tdChatList: tdPosition.list) else { return }
+        let filter = ChatListFilter(tdChatList: tdPosition.list)
         if tdPosition.order.rawValue == 0 {
             positions.removeValue(forKey: filter)
         } else {
@@ -171,8 +201,32 @@ struct ChatSummary: Identifiable, Equatable, Hashable, Sendable {
         }
     }
 
+    mutating func addToList(_ filter: ChatListFilter) {
+        chatLists.insert(filter)
+    }
+
     mutating func removeFromList(_ filter: ChatListFilter) {
+        chatLists.remove(filter)
         positions.removeValue(forKey: filter)
+    }
+
+    func belongsToList(_ filter: ChatListFilter) -> Bool {
+        chatLists.contains(filter) || order(in: filter) != 0
+    }
+
+    var folderIds: Set<Int> {
+        var ids = Set<Int>()
+        for filter in chatLists {
+            if let folderId = filter.folderId {
+                ids.insert(folderId)
+            }
+        }
+        for filter in positions.keys {
+            if let folderId = filter.folderId {
+                ids.insert(folderId)
+            }
+        }
+        return ids
     }
 
     func order(in filter: ChatListFilter) -> Int64 {
@@ -188,7 +242,7 @@ struct ChatSummary: Identifiable, Equatable, Hashable, Sendable {
     }
 
     var isArchived: Bool {
-        order(in: .archive) != 0
+        order(in: .archive) != 0 || chatLists.contains(.archive)
     }
 
     var hasUnreadIndicator: Bool {

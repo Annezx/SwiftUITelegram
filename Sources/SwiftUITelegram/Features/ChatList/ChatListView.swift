@@ -5,10 +5,16 @@ struct ChatListView: View {
     @Environment(AppStore.self) private var appStore
     @FocusState private var isSearchFocused: Bool
     @State private var confirmationRequest: ChatActionConfirmationRequest?
+    @State private var folderEditorRequest: ChatFolderEditorRequest?
+    @State private var isShowingFolderManager: Bool = false
+    @State private var folderPendingDelete: ChatFolderItem?
 
     var body: some View {
         @Bindable var chatList = appStore.chatList
         let chats = chatList.visibleChats
+        let showFolderTags = chatList.areFolderTagsEnabled
+            && chatList.searchQuery.isEmpty
+            && chatList.selectedFilter.folderId == nil
 
         VStack(spacing: 0) {
             // Exact 28pt standard titlebar traffic-light row; search box starts immediately underneath.
@@ -45,16 +51,43 @@ struct ChatListView: View {
                 .padding(.vertical, 6)
                 .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 
-                Picker("列表筛选", selection: $chatList.selectedFilter) {
-                    ForEach(ChatListFilter.allCases) { filter in
-                        Text(filter.title).tag(filter)
+                ChatFolderTabBarView(
+                    tabs: chatList.orderedTabs,
+                    selectedFilter: chatList.selectedFilter,
+                    unreadProvider: { chatList.unreadCounts(for: $0) },
+                    folderOrderIndex: { folderId in
+                        chatList.chatFolders.firstIndex(where: { $0.id == folderId })
+                    },
+                    customFolderCount: chatList.chatFolders.count,
+                    onSelect: { filter in
+                        chatList.selectFilter(filter)
+                    },
+                    onMarkAllRead: { filter in
+                        Task { await chatList.markChatListAsRead(filter) }
+                    },
+                    onRefresh: { filter in
+                        Task { await chatList.refreshList(for: filter) }
+                    },
+                    onCreateFolder: {
+                        folderEditorRequest = .create()
+                    },
+                    onEditFolder: { folderId in
+                        let title = chatList.folder(for: folderId)?.title ?? chatList.title(for: .folder(folderId))
+                        folderEditorRequest = .edit(folderId: folderId, title: title)
+                    },
+                    onMoveFolder: { folderId, offset in
+                        Task { await chatList.moveFolder(folderId: folderId, offset: offset) }
+                    },
+                    onRequestDeleteFolder: { folderId in
+                        folderPendingDelete = chatList.folder(for: folderId)
+                    },
+                    onManageFolders: {
+                        isShowingFolderManager = true
                     }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+                )
             }
             .padding(.horizontal, 10)
-            .padding(.bottom, 10)
+            .padding(.bottom, 8)
 
             Divider()
 
@@ -79,18 +112,14 @@ struct ChatListView: View {
             }
 
             if chats.isEmpty && !chatList.isLoadingChats {
-                ContentUnavailableView(
-                    chatList.searchQuery.isEmpty ? "暂无对话" : "无匹配结果",
-                    systemImage: chatList.searchQuery.isEmpty ? "tray" : "magnifyingglass",
-                    description: Text(chatList.searchQuery.isEmpty ? "已加载的对话将显示在这里。" : "请尝试其他关键词。")
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                emptyChatListView(for: chatList)
             } else {
                 List(selection: $chatList.selectedChatId) {
                     ForEach(chats) { chat in
                         ChatRowView(
                             chat: chat,
-                            isPinned: chat.isPinned(in: chatList.selectedFilter)
+                            isPinned: chatList.searchQuery.isEmpty ? chat.isPinned(in: chatList.selectedFilter) : false,
+                            folderTags: showFolderTags ? chatList.folderTags(for: chat) : []
                         )
                         .tag(chat.id)
                         .contextMenu {
@@ -138,6 +167,38 @@ struct ChatListView: View {
             }
             .environment(appStore)
         }
+        .sheet(item: $folderEditorRequest) { request in
+            ChatFolderEditorSheet(request: request)
+                .environment(appStore)
+        }
+        .sheet(isPresented: $isShowingFolderManager) {
+            ChatFoldersManagerSheet()
+                .environment(appStore)
+        }
+        .confirmationDialog(
+            deleteFolderDialogTitle,
+            isPresented: Binding(
+                get: { folderPendingDelete != nil },
+                set: { if !$0 { folderPendingDelete = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: folderPendingDelete
+        ) { target in
+            Button("删除文件夹", role: .destructive) {
+                folderPendingDelete = nil
+                Task { await appStore.chatList.deleteFolder(folderId: target.id) }
+            }
+            Button("取消", role: .cancel) {
+                folderPendingDelete = nil
+            }
+        } message: { _ in
+            Text("删除文件夹仅移除该分组标签，不会删除或退出其中的任何对话。")
+        }
+        .onAppear {
+            Task {
+                await chatList.loadMoreChats(for: chatList.selectedFilter)
+            }
+        }
         .onChange(of: chatList.selectedFilter) { _, newFilter in
             Task {
                 await chatList.loadMoreChats(for: newFilter)
@@ -145,6 +206,65 @@ struct ChatListView: View {
         }
         .onChange(of: appStore.searchFocusTrigger) { _, _ in
             isSearchFocused = true
+        }
+        .onChange(of: appStore.createFolderTrigger) { _, _ in
+            folderEditorRequest = .create()
+        }
+        .onChange(of: appStore.manageFoldersTrigger) { _, _ in
+            isShowingFolderManager = true
+        }
+    }
+
+    private var deleteFolderDialogTitle: String {
+        if let target = folderPendingDelete {
+            return "确定要删除文件夹「\(target.title)」吗？"
+        }
+        return "确定要删除该文件夹吗？"
+    }
+
+    @ViewBuilder
+    private func emptyChatListView(for chatList: ChatListStore) -> some View {
+        if !chatList.searchQuery.isEmpty {
+            ContentUnavailableView(
+                "无匹配结果",
+                systemImage: "magnifyingglass",
+                description: Text("请尝试其他关键词。")
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            switch chatList.selectedFilter {
+            case .main:
+                ContentUnavailableView(
+                    "暂无对话",
+                    systemImage: "tray",
+                    description: Text("已加载的对话将显示在这里。")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            case .archive:
+                ContentUnavailableView(
+                    "暂无已归档对话",
+                    systemImage: "archivebox",
+                    description: Text("右键点击任意对话可将其归档。")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            case .folder(let folderId):
+                let folder = chatList.folder(for: folderId)
+                let title = folder?.title ?? chatList.title(for: .folder(folderId))
+                ContentUnavailableView {
+                    Label("「\(title)」中暂无对话", systemImage: folder?.sfSymbolName ?? "folder")
+                } description: {
+                    Text("右键点击任意对话可将其加入此文件夹，或编辑筛选规则。")
+                } actions: {
+                    Button("编辑文件夹") {
+                        folderEditorRequest = .edit(folderId: folderId, title: title)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
     }
 
@@ -186,6 +306,38 @@ struct ChatListView: View {
                     systemImage: isPinned ? "pin.slash" : "pin"
                 )
             }
+        }
+
+        Menu {
+            ForEach(chatList.chatFolders) { folder in
+                let inFolder = chat.belongsToList(folder.filter)
+                Button {
+                    Task {
+                        if inFolder {
+                            await chatList.removeChat(chat.id, fromFolder: folder.id)
+                        } else {
+                            await chatList.addChat(chat.id, toFolder: folder.id)
+                        }
+                    }
+                } label: {
+                    Label(
+                        inFolder ? "✓ \(folder.title)" : folder.title,
+                        systemImage: folder.sfSymbolName
+                    )
+                }
+            }
+
+            if !chatList.chatFolders.isEmpty {
+                Divider()
+            }
+
+            Button {
+                folderEditorRequest = .create(preselectedChatId: chat.id)
+            } label: {
+                Label("新建文件夹并添加…", systemImage: "folder.badge.plus")
+            }
+        } label: {
+            Label("文件夹", systemImage: "folder")
         }
 
         if !isSavedMessages {

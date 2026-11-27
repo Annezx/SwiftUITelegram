@@ -19,6 +19,8 @@ final class AppStore {
 
     var noticeMessage: String?
     var searchFocusTrigger: Int = 0
+    var createFolderTrigger: Int = 0
+    var manageFoldersTrigger: Int = 0
 
     init(hub: TDLibClientHub = TDLibClientHub()) {
         self.hub = hub
@@ -284,6 +286,14 @@ final class AppStore {
 
     func triggerSearchFocus() {
         searchFocusTrigger += 1
+    }
+
+    func triggerCreateFolder() {
+        createFolderTrigger += 1
+    }
+
+    func triggerManageFolders() {
+        manageFoldersTrigger += 1
     }
 
     // MARK: - Private Session Coordination

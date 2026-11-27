@@ -254,11 +254,13 @@ final class AccountSession: Identifiable {
             if case .chatListMain = info.chatList {
                 unreadMessageCount = max(0, info.unreadCount)
             }
+            chatList.handleUpdate(update)
 
         case .updateUnreadChatCount(let info):
             if case .chatListMain = info.chatList {
                 unreadChatCount = max(0, info.unreadCount)
             }
+            chatList.handleUpdate(update)
 
         case .updateUser(let info):
             chatList.handleUpdate(update)

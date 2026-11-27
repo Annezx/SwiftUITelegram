@@ -275,6 +275,56 @@ final class TDLibService {
         _ = try await client.deleteChat(chatId: chatId)
     }
 
+    // MARK: - Chat Folders
+
+    func getChatFolder(chatFolderId: Int) async throws -> ChatFolder {
+        let client = try requireClient()
+        return try await client.getChatFolder(chatFolderId: chatFolderId)
+    }
+
+    func createChatFolder(_ folder: ChatFolder) async throws -> ChatFolderInfo {
+        let client = try requireClient()
+        return try await client.createChatFolder(folder: folder)
+    }
+
+    func editChatFolder(chatFolderId: Int, folder: ChatFolder) async throws -> ChatFolderInfo {
+        let client = try requireClient()
+        return try await client.editChatFolder(chatFolderId: chatFolderId, folder: folder)
+    }
+
+    func deleteChatFolder(chatFolderId: Int, leaveChatIds: [Int64] = []) async throws {
+        let client = try requireClient()
+        _ = try await client.deleteChatFolder(
+            chatFolderId: chatFolderId,
+            leaveChatIds: leaveChatIds
+        )
+    }
+
+    func reorderChatFolders(chatFolderIds: [Int], mainChatListPosition: Int) async throws {
+        let client = try requireClient()
+        _ = try await client.reorderChatFolders(
+            chatFolderIds: chatFolderIds,
+            mainChatListPosition: mainChatListPosition
+        )
+    }
+
+    func getChatListsToAddChat(chatId: Int64) async throws -> [ChatList] {
+        let client = try requireClient()
+        let result = try await client.getChatListsToAddChat(chatId: chatId)
+        return result.chatLists
+    }
+
+    func readChatList(_ chatList: ChatList) async throws {
+        let client = try requireClient()
+        _ = try await client.readChatList(chatList: chatList)
+    }
+
+    func getChatFolderDefaultIconName(folder: ChatFolder) async throws -> String {
+        let client = try requireClient()
+        let icon = try await client.getChatFolderDefaultIconName(folder: folder)
+        return icon.name
+    }
+
     // MARK: - Messages
 
     func getChatHistory(
