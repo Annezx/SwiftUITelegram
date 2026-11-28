@@ -79,7 +79,7 @@ final class TDLibService {
         continuation?.finish()
     }
 
-    private func requireClient() throws -> TDLibClient {
+    func requireClient() throws -> TDLibClient {
         lock.lock()
         defer { lock.unlock() }
         guard let client else {

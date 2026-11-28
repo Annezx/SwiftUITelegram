@@ -4,6 +4,8 @@ struct MainSplitView: View {
     @Environment(AppStore.self) private var appStore
 
     var body: some View {
+        @Bindable var store = appStore
+
         HSplitView {
             ChatListView()
                 .frame(minWidth: 260, idealWidth: 310, maxWidth: 420)
@@ -21,6 +23,10 @@ struct MainSplitView: View {
         }
         .onChange(of: appStore.chatList.selectedChatId) { _, newChatId in
             appStore.conversation.selectChat(newChatId)
+        }
+        .sheet(item: $store.pendingChatInvite) { invite in
+            TelegramChatInviteSheet(invite: invite)
+                .environment(appStore)
         }
     }
 
