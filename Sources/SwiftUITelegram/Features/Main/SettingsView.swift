@@ -177,6 +177,8 @@ struct SettingsView: View {
             LabeledContent("临时媒体缓存") {
                 Button("清理预览与转码缓存") {
                     appStore.audioPlayer.stop()
+                    TGSStickerCache.shared.clear()
+                    WebMStickerCache.shared.clear()
                     AppConfiguration.clearMediaCache()
                 }
             }

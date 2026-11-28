@@ -30,6 +30,7 @@
 │    └── [AccountSession] (每账号独立隔离的运行时容器)          │
 │         ├── ChatListStore (排序/筛选/搜索/用户缓存)           │
 │         ├── ConversationStore (分页/发送/相册/已读/实时更新)  │
+│         ├── StickerStore (贴纸包/收藏/最近/热门/Emoji搜索)    │
 │         └── FileCacheStore (独立 fileId 命名空间与进度缓存)   │
 └──────────────────────────────▲──────────────────────────────┘
                                │ Per-Account AsyncStream<Update>
@@ -78,7 +79,7 @@
 
 ### Phase 3 — 桌面端深度体验优化
 - [ ] 真正的多窗口支持（双击会话在新 macOS 窗口中独立打开）
-- [ ] 贴纸动画渲染（TGS Lottie / WebM）与贴纸 / Emoji 表情选择器面板
+- [x] 贴纸动画渲染（TGS Lottie / WebM）与贴纸 / Emoji 表情选择器面板
 - [ ] 草稿云端同步（`setChatDraftMessage` + `updateChatDraftMessage`）
 - [ ] macOS 系统通知（`UNUserNotificationCenter`）与 Dock 未读角标（`NSApp.dockTile.badgeLabel`）
 - [ ] 代理配置面板（MTProxy / SOCKS5 / HTTP，`addProxy` / `enableProxy`）

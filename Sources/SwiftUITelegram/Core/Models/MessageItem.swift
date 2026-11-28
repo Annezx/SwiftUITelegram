@@ -312,12 +312,16 @@ enum MessageDisplayContent: Equatable, Hashable, Sendable {
         case .messageSticker(let value):
             self = .sticker(
                 StickerMedia(
+                    stickerId: value.sticker.id.rawValue,
+                    setId: value.sticker.setId.rawValue,
                     file: MediaFileDescriptor(tdFile: value.sticker.sticker),
+                    remoteFileId: value.sticker.sticker.remote.id,
                     thumbnail: value.sticker.thumbnail.map(ThumbnailInfo.init(tdThumbnail:)),
                     emoji: value.sticker.emoji,
                     width: value.sticker.width,
                     height: value.sticker.height,
-                    format: StickerMediaFormat(tdFormat: value.sticker.format)
+                    format: StickerMediaFormat(tdFormat: value.sticker.format),
+                    isAnimatedEmoji: false
                 )
             )
 
@@ -325,12 +329,16 @@ enum MessageDisplayContent: Equatable, Hashable, Sendable {
             if let sticker = value.animatedEmoji.sticker {
                 self = .sticker(
                     StickerMedia(
+                        stickerId: sticker.id.rawValue,
+                        setId: sticker.setId.rawValue,
                         file: MediaFileDescriptor(tdFile: sticker.sticker),
+                        remoteFileId: sticker.sticker.remote.id,
                         thumbnail: sticker.thumbnail.map(ThumbnailInfo.init(tdThumbnail:)),
                         emoji: value.emoji.isEmpty ? sticker.emoji : value.emoji,
                         width: value.animatedEmoji.stickerWidth > 0 ? value.animatedEmoji.stickerWidth : sticker.width,
                         height: value.animatedEmoji.stickerHeight > 0 ? value.animatedEmoji.stickerHeight : sticker.height,
-                        format: StickerMediaFormat(tdFormat: sticker.format)
+                        format: StickerMediaFormat(tdFormat: sticker.format),
+                        isAnimatedEmoji: true
                     )
                 )
             } else {
