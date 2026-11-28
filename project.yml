@@ -11,6 +11,9 @@ packages:
   TDLibKit:
     url: https://github.com/Swiftgram/TDLibKit
     exactVersion: 1.5.2-tdlib-1.8.70-fe61d641
+  Lottie:
+    url: https://github.com/airbnb/lottie-spm
+    exactVersion: 4.6.1
 
 settings:
   base:
@@ -36,10 +39,17 @@ targets:
     dependencies:
       - package: TDLibKit
         product: TDLibKit
+      - package: Lottie
+        product: Lottie
       - sdk: AVKit.framework
       - sdk: AVFoundation.framework
+      - sdk: CoreMedia.framework
+      - sdk: CoreVideo.framework
       - sdk: QuickLook.framework
       - sdk: QuickLookUI.framework
+      - sdk: VideoToolbox.framework
+      - sdk: WebKit.framework
+      - sdk: libcompression.tbd
     info:
       path: Resources/Info.plist
       properties:

@@ -27,6 +27,7 @@ struct MessageBubbleView: View {
     let onJumpToMessage: (Int64) -> Void
     let onTapSenderAvatar: ((Int64) -> Void)?
     let onTapInlineButton: (InlineKeyboardButtonItem, MessageItem) -> Void
+    let onOpenStickerPack: (Int64) -> Void
 
     @State private var isHovering: Bool = false
 
@@ -549,7 +550,10 @@ struct MessageBubbleView: View {
             )
 
         case .sticker(let media):
-            StickerMessageView(media: media)
+            StickerMessageView(
+                media: media,
+                onOpenStickerPack: onOpenStickerPack
+            )
 
         case .location(let location):
             locationCard(location)
@@ -865,7 +869,49 @@ struct MessageBubbleView: View {
                 }
             }
 
-        case .text, .sticker, .unsupported:
+        case .sticker(let media):
+            if !media.isAnimatedEmoji && media.setId != 0 {
+                Button {
+                    onOpenStickerPack(media.setId)
+                } label: {
+                    Label("查看贴纸包…", systemImage: "square.grid.2x2")
+                }
+            }
+
+            if !media.isAnimatedEmoji {
+                let isFav = appStore.stickers.isFavorite(media)
+                Button {
+                    Task {
+                        let nowFav = await appStore.stickers.toggleFavorite(
+                            fileId: media.file.fileId,
+                            remoteFileId: media.remoteFileId
+                        )
+                        appStore.conversation.showTransientNotice(nowFav ? "已收藏贴纸" : "已取消收藏贴纸")
+                    }
+                } label: {
+                    Label(
+                        isFav ? "取消收藏贴纸" : "收藏贴纸",
+                        systemImage: isFav ? "star.slash" : "star"
+                    )
+                }
+            }
+
+            let state = appStore.fileCache.state(for: media.file)
+            if state.isDownloaded, let path = state.localPath {
+                if media.format == .webp {
+                    Button("复制图片") { MediaFileActions.copyImageToPasteboard(from: path) }
+                }
+                Button("另存为…") {
+                    MediaFileActions.saveFile(
+                        from: path,
+                        suggestedFileName: "sticker_\(message.id).\(media.format.fileExtension)",
+                        mimeType: media.format.mimeType
+                    )
+                }
+                Button("在 Finder 中显示") { MediaFileActions.revealInFinder(localPath: path) }
+            }
+
+        case .text, .unsupported:
             EmptyView()
         }
     }

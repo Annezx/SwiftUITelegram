@@ -65,6 +65,7 @@ final class AppStore {
     var fileCache: FileCacheStore { activeAccount.fileCache }
     var chatList: ChatListStore { activeAccount.chatList }
     var conversation: ConversationStore { activeAccount.conversation }
+    var stickers: StickerStore { activeAccount.stickers }
 
     var authStep: AuthStep { activeAccount.authStep }
     var connectionStatus: ConnectionStatus { activeAccount.connectionStatus }

@@ -797,4 +797,167 @@ final class TDLibService {
         let client = try requireClient()
         return try await client.getFile(fileId: fileId)
     }
+
+    // MARK: - Stickers & Emojis
+
+    func sendSticker(
+        chatId: Int64,
+        fileId: Int,
+        remoteFileId: String = "",
+        width: Int,
+        height: Int,
+        emoji: String,
+        replyTo: InputMessageReplyTo? = nil
+    ) async throws -> Message {
+        let inputFile: InputFile = fileId > 0
+            ? .inputFileId(InputFileId(id: fileId))
+            : .inputFileRemote(InputFileRemote(id: remoteFileId))
+
+        let content = InputMessageContent.inputMessageSticker(
+            InputMessageSticker(
+                emoji: emoji,
+                sticker: InputSticker(
+                    height: max(height, 0),
+                    sticker: inputFile,
+                    thumbnail: nil,
+                    width: max(width, 0)
+                )
+            )
+        )
+        return try await sendMessage(chatId: chatId, content: content, replyTo: replyTo)
+    }
+
+    func getInstalledStickerSets(stickerType: StickerType = .stickerTypeRegular) async throws -> [StickerSetInfo] {
+        let client = try requireClient()
+        let result = try await client.getInstalledStickerSets(stickerType: stickerType)
+        return result.sets
+    }
+
+    func getStickerSet(setId: Int64) async throws -> StickerSet {
+        let client = try requireClient()
+        return try await client.getStickerSet(setId: TdInt64(setId))
+    }
+
+    func getTrendingStickerSets(
+        offset: Int = 0,
+        limit: Int = 20,
+        stickerType: StickerType = .stickerTypeRegular
+    ) async throws -> [StickerSetInfo] {
+        let client = try requireClient()
+        let result = try await client.getTrendingStickerSets(
+            limit: limit,
+            offset: offset,
+            stickerType: stickerType
+        )
+        return result.sets
+    }
+
+    func getRecentStickers(isAttached: Bool = false) async throws -> [Sticker] {
+        let client = try requireClient()
+        let result = try await client.getRecentStickers(isAttached: isAttached)
+        return result.stickers
+    }
+
+    func getFavoriteStickers() async throws -> [Sticker] {
+        let client = try requireClient()
+        let result = try await client.getFavoriteStickers()
+        return result.stickers
+    }
+
+    func addFavoriteSticker(fileId: Int, remoteFileId: String = "") async throws {
+        let client = try requireClient()
+        let inputFile: InputFile = fileId > 0
+            ? .inputFileId(InputFileId(id: fileId))
+            : .inputFileRemote(InputFileRemote(id: remoteFileId))
+        _ = try await client.addFavoriteSticker(sticker: inputFile)
+    }
+
+    func removeFavoriteSticker(fileId: Int, remoteFileId: String = "") async throws {
+        let client = try requireClient()
+        let inputFile: InputFile = fileId > 0
+            ? .inputFileId(InputFileId(id: fileId))
+            : .inputFileRemote(InputFileRemote(id: remoteFileId))
+        _ = try await client.removeFavoriteSticker(sticker: inputFile)
+    }
+
+    func removeRecentSticker(fileId: Int, remoteFileId: String = "", isAttached: Bool = false) async throws {
+        let client = try requireClient()
+        let inputFile: InputFile = fileId > 0
+            ? .inputFileId(InputFileId(id: fileId))
+            : .inputFileRemote(InputFileRemote(id: remoteFileId))
+        _ = try await client.removeRecentSticker(isAttached: isAttached, sticker: inputFile)
+    }
+
+    func getStickers(
+        chatId: Int64 = 0,
+        query: String,
+        limit: Int = 40,
+        stickerType: StickerType = .stickerTypeRegular
+    ) async throws -> [Sticker] {
+        let client = try requireClient()
+        let result = try await client.getStickers(
+            chatId: chatId,
+            limit: limit,
+            query: query,
+            stickerType: stickerType
+        )
+        return result.stickers
+    }
+
+    func searchStickers(
+        emojis: String = "",
+        query: String = "",
+        inputLanguageCodes: [String] = [],
+        offset: Int = 0,
+        limit: Int = 40,
+        stickerType: StickerType = .stickerTypeRegular
+    ) async throws -> [Sticker] {
+        let client = try requireClient()
+        let result = try await client.searchStickers(
+            emojis: emojis,
+            inputLanguageCodes: inputLanguageCodes,
+            limit: limit,
+            offset: offset,
+            query: query,
+            stickerType: stickerType
+        )
+        return result.stickers
+    }
+
+    func searchStickerSets(
+        query: String,
+        stickerType: StickerType = .stickerTypeRegular
+    ) async throws -> [StickerSetInfo] {
+        let client = try requireClient()
+        let result = try await client.searchStickerSets(
+            query: query,
+            stickerType: stickerType
+        )
+        return result.sets
+    }
+
+    func changeStickerSet(
+        setId: Int64,
+        isInstalled: Bool,
+        isArchived: Bool = false
+    ) async throws {
+        let client = try requireClient()
+        _ = try await client.changeStickerSet(
+            isArchived: isArchived,
+            isInstalled: isInstalled,
+            setId: TdInt64(setId)
+        )
+    }
+
+    func searchEmojis(
+        text: String,
+        inputLanguageCodes: [String] = []
+    ) async throws -> [EmojiKeyword] {
+        let client = try requireClient()
+        let result = try await client.searchEmojis(
+            inputLanguageCodes: inputLanguageCodes,
+            text: text
+        )
+        return result.emojiKeywords
+    }
 }

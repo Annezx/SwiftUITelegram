@@ -17,6 +17,7 @@ final class AccountSession: Identifiable {
     let fileCache: FileCacheStore
     let chatList: ChatListStore
     let conversation: ConversationStore
+    let stickers: StickerStore
 
     private var updatesTask: Task<Void, Never>?
     private var hasStarted = false
@@ -68,6 +69,7 @@ final class AccountSession: Identifiable {
         self.fileCache = FileCacheStore(service: service)
         self.chatList = ChatListStore(service: service)
         self.conversation = ConversationStore(service: service)
+        self.stickers = StickerStore(service: service, storageKey: profile.storageKey)
 
         self.conversation.onOpenTelegramURL = { [weak self] url in
             await self?.openTelegramURL(url)
@@ -281,6 +283,7 @@ final class AccountSession: Identifiable {
         default:
             chatList.handleUpdate(update)
             conversation.handleUpdate(update)
+            stickers.handleUpdate(update)
         }
     }
 
@@ -310,6 +313,7 @@ final class AccountSession: Identifiable {
             pendingChatInvite = nil
             chatList.reset()
             conversation.reset()
+            stickers.reset()
             fileCache.reset()
 
             if isClosingForRemoval {
@@ -383,6 +387,7 @@ final class AccountSession: Identifiable {
         pendingChatInvite = nil
         chatList.reset()
         conversation.reset()
+        stickers.reset()
         fileCache.reset()
         onClosedForRemoval?(self, shouldDeleteStorageOnClose)
     }
