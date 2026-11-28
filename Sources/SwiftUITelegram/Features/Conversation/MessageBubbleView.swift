@@ -6,10 +6,14 @@ struct MessageBubbleView: View {
 
     let entry: ConversationTimelineEntry
     let senderName: String?
+    let senderNameColor: Color
+    let showAvatarColumn: Bool
+    let senderAvatar: SenderAvatarInfo?
     let isReadByRecipient: Bool
     let isHighlighted: Bool
     let isSelectionMode: Bool
     let isSelected: Bool
+    let inFlightCallbackButtonKey: String?
     let onOpenLightbox: (Int64) -> Void
     let onQuickLook: (URL) -> Void
     let onToggleSelect: () -> Void
@@ -21,6 +25,8 @@ struct MessageBubbleView: View {
     let onCopyLink: () -> Void
     let onEnterSelectionMode: () -> Void
     let onJumpToMessage: (Int64) -> Void
+    let onTapSenderAvatar: ((Int64) -> Void)?
+    let onTapInlineButton: (InlineKeyboardButtonItem, MessageItem) -> Void
 
     @State private var isHovering: Bool = false
 
@@ -84,12 +90,29 @@ struct MessageBubbleView: View {
             if isOutgoing {
                 Spacer(minLength: 24)
                 hoverQuickActions
+            } else if showAvatarColumn {
+                groupSenderAvatarColumn
             }
 
-            if isBorderless {
-                borderlessContent
-            } else {
-                standardBubble
+            VStack(alignment: isOutgoing ? .trailing : .leading, spacing: 4) {
+                if isBorderless {
+                    borderlessContent
+                } else {
+                    standardBubble
+                }
+
+                if let inlineSource = entry.inlineKeyboardSourceMessage,
+                   let rows = inlineSource.replyMarkup?.inlineKeyboardRows
+                {
+                    InlineKeyboardView(
+                        messageId: inlineSource.id,
+                        rows: rows,
+                        inFlightButtonKey: inFlightCallbackButtonKey
+                    ) { button in
+                        onTapInlineButton(button, inlineSource)
+                    }
+                    .allowsHitTesting(!isSelectionMode)
+                }
             }
 
             if !isOutgoing {
@@ -115,6 +138,37 @@ struct MessageBubbleView: View {
             if leadMessage.replyTo != nil {
                 appStore.conversation.ensureRepliedMessageLoaded(for: leadMessage)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var groupSenderAvatarColumn: some View {
+        if let avatar = senderAvatar {
+            let avatarView = AvatarView(
+                title: avatar.title,
+                initials: avatar.initials,
+                accentSeed: avatar.accentColorId,
+                fileId: avatar.smallPhotoFileId,
+                knownLocalPath: avatar.smallPhotoLocalPath,
+                size: 32
+            )
+
+            if let userId = avatar.userId, let onTapSenderAvatar, !isSelectionMode {
+                Button {
+                    onTapSenderAvatar(userId)
+                } label: {
+                    avatarView
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help(avatar.title)
+            } else {
+                avatarView
+                    .help(avatar.title)
+            }
+        } else {
+            Color.clear
+                .frame(width: 32, height: 1)
         }
     }
 
@@ -189,7 +243,7 @@ struct MessageBubbleView: View {
                 GridRow {
                     Text(senderName)
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(isOutgoing ? Color.white.opacity(0.92) : Color.accentColor)
+                        .foregroundStyle(isOutgoing ? Color.white.opacity(0.92) : senderNameColor)
                 }
             }
 
@@ -236,7 +290,7 @@ struct MessageBubbleView: View {
             if let senderName, !senderName.isEmpty {
                 Text(senderName)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(senderNameColor)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 2)
                     .background(.regularMaterial, in: Capsule())

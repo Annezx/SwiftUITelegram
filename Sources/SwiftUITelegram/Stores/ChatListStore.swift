@@ -335,6 +335,73 @@ final class ChatListStore {
         }
     }
 
+    func senderAvatarInfo(for sender: MessageSenderKind) -> SenderAvatarInfo {
+        switch sender {
+        case .user(let userId):
+            if let user = usersById[userId] {
+                return SenderAvatarInfo(
+                    title: user.displayName,
+                    initials: user.avatarInitials,
+                    accentColorId: user.accentColorId,
+                    smallPhotoFileId: user.smallPhotoFileId,
+                    smallPhotoLocalPath: user.smallPhotoLocalPath,
+                    userId: userId
+                )
+            }
+            ensureUserLoaded(userId: userId)
+            return SenderAvatarInfo(
+                title: "用户",
+                initials: "?",
+                accentColorId: Int(abs(userId) % 7),
+                smallPhotoFileId: nil,
+                smallPhotoLocalPath: nil,
+                userId: userId
+            )
+
+        case .chat(let chatId):
+            if let chat = chatsById[chatId] {
+                return SenderAvatarInfo(
+                    title: chat.title,
+                    initials: chat.avatarInitials,
+                    accentColorId: chat.accentColorId,
+                    smallPhotoFileId: chat.smallPhotoFileId,
+                    smallPhotoLocalPath: chat.smallPhotoLocalPath,
+                    userId: nil
+                )
+            }
+            ensureChatLoaded(chatId: chatId)
+            return SenderAvatarInfo(
+                title: "群组",
+                initials: "群",
+                accentColorId: Int(abs(chatId) % 7),
+                smallPhotoFileId: nil,
+                smallPhotoLocalPath: nil,
+                userId: nil
+            )
+        }
+    }
+
+    func isBotChat(_ chat: ChatSummary) -> Bool {
+        botUserId(for: chat) != nil
+    }
+
+    func botUserId(for chat: ChatSummary) -> Int64? {
+        guard case .privateUser(let userId) = chat.kind else { return nil }
+        if let user = usersById[userId] {
+            return user.isBot ? userId : nil
+        }
+        ensureUserLoaded(userId: userId)
+        return nil
+    }
+
+    func username(forUserId userId: Int64) -> String? {
+        if let user = usersById[userId] {
+            return user.username
+        }
+        ensureUserLoaded(userId: userId)
+        return nil
+    }
+
     func originDisplayName(for origin: MessageOriginInfo) -> String {
         switch origin {
         case .user(let userId):
@@ -780,6 +847,9 @@ final class ChatListStore {
 
         case .updateChatIsMarkedAsUnread(let info):
             chatsById[info.chatId]?.isMarkedAsUnread = info.isMarkedAsUnread
+
+        case .updateChatReplyMarkup(let info):
+            chatsById[info.chatId]?.replyMarkupMessageId = info.replyMarkupMessage?.id ?? 0
 
         case .updateUser(let info):
             usersById[info.user.id] = UserSummary(tdUser: info.user)

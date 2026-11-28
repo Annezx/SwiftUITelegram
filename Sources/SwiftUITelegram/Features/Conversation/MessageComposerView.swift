@@ -18,6 +18,13 @@ struct MessageComposerView: View {
     let composerContextThumbnail: MediaFileDescriptor?
     let focusTrigger: Int
     let recorder: VoiceRecorderManager
+    let isBotChat: Bool
+    let botCommands: [BotCommandItem]
+    let botMenuButton: BotMenuButtonItem?
+    let activeReplyKeyboard: ReplyKeyboardMarkup?
+    let isReplyKeyboardVisible: Bool
+    let customInputPlaceholder: String?
+    let botUsernameProvider: (Int64) -> String?
 
     let onPickMedia: () -> Void
     let onPickDocuments: () -> Void
@@ -28,6 +35,12 @@ struct MessageComposerView: View {
     let onTapComposerContext: () -> Void
     let onSend: () -> Void
     let onSendVoiceNote: (RecordedVoiceNote) -> Void
+    let onSendBotCommand: (BotCommandItem, Bool) -> Void
+    let onFillBotCommand: (BotCommandItem) -> Void
+    let onSendBuiltInBotCommand: (String) -> Void
+    let onOpenBotMenuWebApp: () -> Void
+    let onTapReplyKeyboardButton: (ReplyKeyboardButtonItem) -> Void
+    let onToggleReplyKeyboard: () -> Void
 
     @FocusState private var isTextFieldFocused: Bool
 
@@ -44,6 +57,31 @@ struct MessageComposerView: View {
             && !isPreparingAttachments
     }
 
+    private var shouldShowBotMenuControl: Bool {
+        !composerMode.isEditing && (isBotChat || !botCommands.isEmpty || botMenuButton != nil)
+    }
+
+    private var slashCommandSuggestions: [BotCommandItem] {
+        guard !recorder.isRecording,
+              !composerMode.isEditing,
+              !botCommands.isEmpty,
+              text.hasPrefix("/"),
+              !text.contains(" "),
+              !text.contains("\n")
+        else {
+            return []
+        }
+
+        let query = String(text.dropFirst()).lowercased()
+        if query.isEmpty {
+            return botCommands
+        }
+        return botCommands.filter { item in
+            item.command.lowercased().contains(query)
+                || item.description.lowercased().contains(query)
+        }
+    }
+
     private var placeholderText: String {
         switch composerMode {
         case .editing(let target):
@@ -51,10 +89,16 @@ struct MessageComposerView: View {
                 ? "编辑消息…（Enter 保存，Esc 取消）"
                 : "编辑说明文字…（留空可清除，Enter 保存）"
         case .replying:
+            if pendingAttachments.isEmpty, let custom = customInputPlaceholder, !custom.isEmpty {
+                return custom
+            }
             return pendingAttachments.isEmpty
                 ? "输入回复内容…（Enter 发送，Esc 取消）"
                 : "添加回复说明文字…（Enter 发送）"
         case .normal:
+            if pendingAttachments.isEmpty, let custom = customInputPlaceholder, !custom.isEmpty {
+                return custom
+            }
             return pendingAttachments.isEmpty
                 ? "输入消息…（Enter 发送，Option+Enter 换行）"
                 : "添加说明文字…（Enter 发送，Option+Enter 换行）"
@@ -62,7 +106,24 @@ struct MessageComposerView: View {
     }
 
     var body: some View {
+        let suggestions = slashCommandSuggestions
+
         VStack(spacing: 0) {
+            if !suggestions.isEmpty {
+                SlashCommandSuggestionsBar(
+                    isBotChat: isBotChat,
+                    commands: suggestions,
+                    botUsernameProvider: botUsernameProvider,
+                    onSendCommand: { command in
+                        onSendBotCommand(command, true)
+                    },
+                    onFillCommand: { command in
+                        onFillBotCommand(command)
+                    }
+                )
+                Divider()
+            }
+
             if !recorder.isRecording && composerMode != .normal {
                 composerContextBar
                 Divider()
@@ -77,6 +138,18 @@ struct MessageComposerView: View {
                 voiceRecordingBar
             } else {
                 inputRow
+            }
+
+            if !recorder.isRecording,
+               !composerMode.isEditing,
+               isReplyKeyboardVisible,
+               let keyboard = activeReplyKeyboard
+            {
+                Divider()
+                ReplyKeyboardPanelView(
+                    keyboard: keyboard,
+                    onTapButton: onTapReplyKeyboardButton
+                )
             }
         }
         .background(.bar)
@@ -216,6 +289,23 @@ struct MessageComposerView: View {
 
     private var inputRow: some View {
         HStack(alignment: .bottom, spacing: 10) {
+            if shouldShowBotMenuControl {
+                BotCommandMenuButton(
+                    isBotChat: isBotChat,
+                    commands: botCommands,
+                    menuButton: botMenuButton,
+                    botUsernameProvider: botUsernameProvider,
+                    onSendCommand: { command in
+                        onSendBotCommand(command, false)
+                    },
+                    onFillCommand: { command in
+                        onFillBotCommand(command)
+                    },
+                    onOpenMenuWebApp: onOpenBotMenuWebApp,
+                    onSendBuiltInCommand: onSendBuiltInBotCommand
+                )
+            }
+
             if !composerMode.isEditing {
                 AttachmentMenuButton(
                     isDisabled: isSending,
@@ -251,6 +341,26 @@ struct MessageComposerView: View {
                 if canSend {
                     onSend()
                 }
+            }
+
+            if !composerMode.isEditing && activeReplyKeyboard != nil {
+                Button {
+                    onToggleReplyKeyboard()
+                } label: {
+                    Image(systemName: isReplyKeyboardVisible ? "square.grid.2x2.fill" : "square.grid.2x2")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(isReplyKeyboardVisible ? Color.accentColor : Color.secondary)
+                        .frame(width: LayoutMetrics.composerControlHeight, height: LayoutMetrics.composerControlHeight)
+                        .background(
+                            isReplyKeyboardVisible
+                                ? Color.accentColor.opacity(0.14)
+                                : Color.clear,
+                            in: Circle()
+                        )
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help(isReplyKeyboardVisible ? "收起机器人键盘" : "展开机器人键盘")
             }
 
             if composerMode.isEditing {

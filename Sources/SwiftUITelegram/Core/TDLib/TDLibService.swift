@@ -159,6 +159,100 @@ final class TDLibService {
         return try await client.getUser(userId: userId)
     }
 
+    func getUserFullInfo(userId: Int64) async throws -> UserFullInfo {
+        let client = try requireClient()
+        return try await client.getUserFullInfo(userId: userId)
+    }
+
+    func getBasicGroupFullInfo(basicGroupId: Int64) async throws -> BasicGroupFullInfo {
+        let client = try requireClient()
+        return try await client.getBasicGroupFullInfo(basicGroupId: basicGroupId)
+    }
+
+    func getSupergroupFullInfo(supergroupId: Int64) async throws -> SupergroupFullInfo {
+        let client = try requireClient()
+        return try await client.getSupergroupFullInfo(supergroupId: supergroupId)
+    }
+
+    // MARK: - Bot Interactions
+
+    func getCallbackQueryAnswer(
+        chatId: Int64,
+        messageId: Int64,
+        payload: CallbackQueryPayload
+    ) async throws -> CallbackQueryAnswer {
+        let client = try requireClient()
+        return try await client.getCallbackQueryAnswer(
+            chatId: chatId,
+            messageId: messageId,
+            payload: payload
+        )
+    }
+
+    func getLoginUrl(
+        chatId: Int64,
+        messageId: Int64,
+        buttonId: Int64,
+        allowWriteAccess: Bool = false
+    ) async throws -> HttpUrl {
+        let client = try requireClient()
+        return try await client.getLoginUrl(
+            allowWriteAccess: allowWriteAccess,
+            buttonId: buttonId,
+            chatId: chatId,
+            messageId: messageId
+        )
+    }
+
+    func getWebAppUrl(botUserId: Int64, url: String) async throws -> WebAppUrl {
+        let client = try requireClient()
+        let params = WebAppOpenParameters(
+            applicationName: "SwiftUITelegram",
+            mode: nil,
+            theme: nil
+        )
+        return try await client.getWebAppUrl(
+            botUserId: botUserId,
+            parameters: params,
+            url: url
+        )
+    }
+
+    func openWebApp(
+        chatId: Int64,
+        botUserId: Int64,
+        url: String,
+        replyTo: InputMessageReplyTo? = nil
+    ) async throws -> WebAppInfo {
+        let client = try requireClient()
+        let params = WebAppOpenParameters(
+            applicationName: "SwiftUITelegram",
+            mode: nil,
+            theme: nil
+        )
+        return try await client.openWebApp(
+            botUserId: botUserId,
+            chatId: chatId,
+            parameters: params,
+            replyTo: replyTo,
+            topicId: nil,
+            url: url
+        )
+    }
+
+    func sendBotStartMessage(
+        botUserId: Int64,
+        chatId: Int64,
+        parameter: String = ""
+    ) async throws -> Message {
+        let client = try requireClient()
+        return try await client.sendBotStartMessage(
+            botUserId: botUserId,
+            chatId: chatId,
+            parameter: parameter
+        )
+    }
+
     // MARK: - Chats
 
     func loadChats(list: ChatList, limit: Int = 40) async throws {
