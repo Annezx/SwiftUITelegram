@@ -34,13 +34,13 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("AVKit"),
                 .linkedFramework("AVFoundation"),
-                .linkedFramework("Compression"),
                 .linkedFramework("CoreMedia"),
                 .linkedFramework("CoreVideo"),
                 .linkedFramework("QuickLook"),
                 .linkedFramework("QuickLookUI"),
                 .linkedFramework("VideoToolbox"),
-                .linkedFramework("WebKit")
+                .linkedFramework("WebKit"),
+                .linkedLibrary("compression")
             ]
         )
     ],
