@@ -24,6 +24,10 @@ struct ConversationView: View {
             ?? voiceRecorder.errorMessage
     }
 
+    private var isBotChat: Bool {
+        appStore.conversation.isActiveChatBot || appStore.chatList.isBotChat(chat)
+    }
+
     var body: some View {
         @Bindable var conversation = appStore.conversation
         let entries = conversation.timelineEntries
@@ -118,6 +122,15 @@ struct ConversationView: View {
                     composerContextThumbnail: composerContextThumbnail(for: conversation.composerMode),
                     focusTrigger: conversation.composerFocusTrigger,
                     recorder: voiceRecorder,
+                    isBotChat: isBotChat,
+                    botCommands: conversation.botCommands,
+                    botMenuButton: conversation.botMenuButton,
+                    activeReplyKeyboard: conversation.activeReplyKeyboard,
+                    isReplyKeyboardVisible: conversation.isReplyKeyboardVisible,
+                    customInputPlaceholder: conversation.activeInputPlaceholder,
+                    botUsernameProvider: { botUserId in
+                        appStore.chatList.username(forUserId: botUserId)
+                    },
                     onPickMedia: presentMediaPicker,
                     onPickDocuments: presentDocumentPicker,
                     onPasteClipboardImage: { pasteMediaFromClipboard(onlyWhenNoPlainText: false) },
@@ -142,6 +155,38 @@ struct ConversationView: View {
                     },
                     onSendVoiceNote: { recorded in
                         Task { await conversation.sendVoiceNote(recorded) }
+                    },
+                    onSendBotCommand: { command, clearDraft in
+                        let username = command.botUserId.flatMap { appStore.chatList.username(forUserId: $0) }
+                        Task {
+                            await conversation.sendBotCommand(
+                                command,
+                                botUsername: username,
+                                clearDraft: clearDraft
+                            )
+                        }
+                    },
+                    onFillBotCommand: { command in
+                        let username = command.botUserId.flatMap { appStore.chatList.username(forUserId: $0) }
+                        conversation.fillBotCommand(command, botUsername: username)
+                    },
+                    onSendBuiltInBotCommand: { commandText in
+                        Task {
+                            if commandText == "/start" {
+                                await conversation.sendBotStart()
+                            } else {
+                                await conversation.sendImmediateText(commandText)
+                            }
+                        }
+                    },
+                    onOpenBotMenuWebApp: {
+                        Task { await conversation.openBotMenuWebApp() }
+                    },
+                    onTapReplyKeyboardButton: { button in
+                        Task { await conversation.handleReplyKeyboardButton(button) }
+                    },
+                    onToggleReplyKeyboard: {
+                        conversation.toggleReplyKeyboard()
                     }
                 )
             }
@@ -194,6 +239,25 @@ struct ConversationView: View {
                 return ok
             }
             .environment(appStore)
+        }
+        .sheet(item: $conversation.pendingPasswordCallback) { request in
+            BotCallbackPasswordSheet(request: request) { password in
+                await appStore.conversation.submitPasswordCallback(request, password: password)
+            }
+        }
+        .alert(
+            conversation.callbackAlert?.title ?? "提示",
+            isPresented: Binding(
+                get: { conversation.callbackAlert != nil },
+                set: { if !$0 { conversation.callbackAlert = nil } }
+            ),
+            presenting: conversation.callbackAlert
+        ) { _ in
+            Button("好", role: .cancel) {
+                conversation.callbackAlert = nil
+            }
+        } message: { alert in
+            Text(alert.message)
         }
         .onAppear {
             installKeyEventMonitor()
@@ -350,28 +414,38 @@ struct ConversationView: View {
                     ProgressView("正在加载消息…")
                         .padding(.top, 80)
                 } else if entries.isEmpty {
-                    ContentUnavailableView(
-                        "暂无消息",
-                        systemImage: "text.bubble",
-                        description: Text("发送文字、拖拽文件或粘贴图片开始聊天吧。")
-                    )
-                    .padding(.top, 80)
+                    emptyTimelineView(conversation: conversation)
+                        .padding(.top, 80)
                 } else {
                     ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                         if shouldShowDateDivider(at: index, in: entries) {
                             dateSeparator(for: entry.date)
                         }
 
+                        let showAvatarColumn = chat.kind.isGroup && !entry.leadMessage.isOutgoing
+                        let avatarInfo = showAvatarColumn
+                            ? appStore.chatList.senderAvatarInfo(for: entry.leadMessage.sender)
+                            : nil
+                        let showGroupAvatar = showAvatarColumn && shouldShowGroupAvatar(at: index, in: entries)
+                        let showSenderName = shouldShowSenderName(at: index, in: entries)
+                        let senderNameColor = avatarInfo
+                            .flatMap { ChatFolderColorPalette.color(for: $0.accentColorId) }
+                            ?? Color.accentColor
+
                         MessageBubbleView(
                             entry: entry,
-                            senderName: shouldShowSenderName(for: entry.leadMessage)
+                            senderName: showSenderName
                                 ? appStore.chatList.senderDisplayName(for: entry.leadMessage.sender)
                                 : nil,
+                            senderNameColor: senderNameColor,
+                            showAvatarColumn: showAvatarColumn,
+                            senderAvatar: showGroupAvatar ? avatarInfo : nil,
                             isReadByRecipient: entry.tailMessage.isOutgoing
                                 && entry.tailMessage.id <= chat.lastReadOutboxMessageId,
                             isHighlighted: conversation.highlightedEntryId == entry.id,
                             isSelectionMode: conversation.isSelectionMode,
                             isSelected: conversation.isEntrySelected(entry),
+                            inFlightCallbackButtonKey: conversation.inFlightCallbackButtonKey,
                             onOpenLightbox: { messageId in
                                 openLightbox(at: messageId)
                             },
@@ -404,6 +478,31 @@ struct ConversationView: View {
                             },
                             onJumpToMessage: { messageId in
                                 Task { await conversation.jumpToMessage(id: messageId) }
+                            },
+                            onTapSenderAvatar: { userId in
+                                Task {
+                                    if let err = await appStore.chatList.openPrivateChat(userId: userId) {
+                                        conversation.showTransientNotice(err)
+                                    }
+                                }
+                            },
+                            onTapInlineButton: { button, sourceMessage in
+                                Task {
+                                    await conversation.handleInlineKeyboardButton(
+                                        button,
+                                        on: sourceMessage,
+                                        openUserChat: { userId in
+                                            Task {
+                                                if let err = await appStore.chatList.openPrivateChat(userId: userId) {
+                                                    conversation.showTransientNotice(err)
+                                                }
+                                            }
+                                        },
+                                        resolveBotUsername: { botId in
+                                            appStore.chatList.username(forUserId: botId)
+                                        }
+                                    )
+                                }
                             }
                         )
                         .id(entry.id)
@@ -661,6 +760,8 @@ struct ConversationView: View {
             guard lightboxSession == nil,
                   deleteRequest == nil,
                   forwardRequest == nil,
+                  appStore.conversation.pendingPasswordCallback == nil,
+                  appStore.conversation.callbackAlert == nil,
                   !voiceRecorder.isRecording
             else {
                 return event
@@ -705,8 +806,88 @@ struct ConversationView: View {
 
     // MARK: - Timeline Helpers
 
-    private func shouldShowSenderName(for message: MessageItem) -> Bool {
-        chat.kind.isGroup && !message.isOutgoing
+    @ViewBuilder
+    private func emptyTimelineView(conversation: ConversationStore) -> some View {
+        if isBotChat {
+            VStack(spacing: 12) {
+                AvatarView(
+                    title: chat.title,
+                    initials: chat.avatarInitials,
+                    accentSeed: chat.accentColorId,
+                    fileId: chat.smallPhotoFileId,
+                    knownLocalPath: chat.smallPhotoLocalPath,
+                    size: 64
+                )
+
+                Text(chat.title)
+                    .font(.title3.weight(.semibold))
+
+                if !conversation.botDescription.isEmpty {
+                    Text(conversation.botDescription)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 360)
+                } else {
+                    Text("点击下方按钮启动机器人，或打开左下角「菜单」查看可用命令。")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 360)
+                }
+
+                Button {
+                    Task { await conversation.sendBotStart() }
+                } label: {
+                    Label("开始使用 (/start)", systemImage: "play.fill")
+                        .padding(.horizontal, 8)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+                .padding(.top, 4)
+            }
+            .padding(24)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(.separator.opacity(0.45), lineWidth: 0.5)
+            )
+        } else {
+            ContentUnavailableView(
+                "暂无消息",
+                systemImage: "text.bubble",
+                description: Text("发送文字、拖拽文件或粘贴图片开始聊天吧。")
+            )
+        }
+    }
+
+    private func isSameSenderBurst(
+        _ earlier: ConversationTimelineEntry,
+        _ later: ConversationTimelineEntry
+    ) -> Bool {
+        guard earlier.leadMessage.isOutgoing == later.leadMessage.isOutgoing,
+              earlier.leadMessage.sender == later.leadMessage.sender
+        else {
+            return false
+        }
+        guard Calendar.current.isDate(earlier.date, inSameDayAs: later.date) else {
+            return false
+        }
+        return abs(later.date.timeIntervalSince(earlier.date)) <= 300
+    }
+
+    private func shouldShowSenderName(at index: Int, in entries: [ConversationTimelineEntry]) -> Bool {
+        let entry = entries[index]
+        guard chat.kind.isGroup && !entry.leadMessage.isOutgoing else { return false }
+        if index == 0 { return true }
+        return !isSameSenderBurst(entries[index - 1], entry)
+    }
+
+    private func shouldShowGroupAvatar(at index: Int, in entries: [ConversationTimelineEntry]) -> Bool {
+        let entry = entries[index]
+        guard chat.kind.isGroup && !entry.leadMessage.isOutgoing else { return false }
+        if index == entries.count - 1 { return true }
+        return !isSameSenderBurst(entry, entries[index + 1])
     }
 
     private func shouldShowDateDivider(at index: Int, in entries: [ConversationTimelineEntry]) -> Bool {

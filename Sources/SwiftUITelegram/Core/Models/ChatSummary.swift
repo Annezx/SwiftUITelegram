@@ -113,6 +113,7 @@ struct ChatSummary: Identifiable, Equatable, Hashable, Sendable {
     var muteFor: Int
     var canBeDeletedOnlyForSelf: Bool
     var canBeDeletedForAllUsers: Bool
+    var replyMarkupMessageId: Int64
     var positions: [ChatListFilter: ChatOrderPosition]
     var chatLists: Set<ChatListFilter>
 
@@ -131,6 +132,7 @@ struct ChatSummary: Identifiable, Equatable, Hashable, Sendable {
         muteFor: Int = 0,
         canBeDeletedOnlyForSelf: Bool = true,
         canBeDeletedForAllUsers: Bool = false,
+        replyMarkupMessageId: Int64 = 0,
         positions: [ChatListFilter: ChatOrderPosition] = [:],
         chatLists: Set<ChatListFilter> = []
     ) {
@@ -148,6 +150,7 @@ struct ChatSummary: Identifiable, Equatable, Hashable, Sendable {
         self.muteFor = muteFor
         self.canBeDeletedOnlyForSelf = canBeDeletedOnlyForSelf
         self.canBeDeletedForAllUsers = canBeDeletedForAllUsers
+        self.replyMarkupMessageId = replyMarkupMessageId
         self.positions = positions
         self.chatLists = chatLists
     }
@@ -171,6 +174,7 @@ struct ChatSummary: Identifiable, Equatable, Hashable, Sendable {
         self.muteFor = tdChat.notificationSettings.muteFor
         self.canBeDeletedOnlyForSelf = tdChat.canBeDeletedOnlyForSelf
         self.canBeDeletedForAllUsers = tdChat.canBeDeletedForAllUsers
+        self.replyMarkupMessageId = tdChat.replyMarkupMessageId
 
         var mappedPositions: [ChatListFilter: ChatOrderPosition] = [:]
         for pos in tdChat.positions {
@@ -274,6 +278,8 @@ struct UserSummary: Identifiable, Equatable, Hashable, Sendable {
     var lastName: String
     var username: String?
     var phoneNumber: String
+    var isBot: Bool
+    var accentColorId: Int
     var statusText: String
     var smallPhotoFileId: Int?
     var smallPhotoLocalPath: String?
@@ -286,12 +292,28 @@ struct UserSummary: Identifiable, Equatable, Hashable, Sendable {
         return full.isEmpty ? "User \(id)" : full
     }
 
+    var avatarInitials: String {
+        let parts = displayName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: " ")
+        if parts.count >= 2 {
+            return String(parts[0].prefix(1) + parts[1].prefix(1)).uppercased()
+        }
+        return String(displayName.prefix(2)).uppercased()
+    }
+
     init(tdUser: User) {
         self.id = tdUser.id
         self.firstName = tdUser.firstName
         self.lastName = tdUser.lastName
         self.username = tdUser.usernames?.activeUsernames.first
         self.phoneNumber = tdUser.phoneNumber
+        if case .userTypeBot = tdUser.type {
+            self.isBot = true
+        } else {
+            self.isBot = false
+        }
+        self.accentColorId = tdUser.accentColorId
         self.smallPhotoFileId = tdUser.profilePhoto?.small.id
         if let local = tdUser.profilePhoto?.small.local, local.isDownloadingCompleted, !local.path.isEmpty {
             self.smallPhotoLocalPath = local.path
@@ -299,22 +321,26 @@ struct UserSummary: Identifiable, Equatable, Hashable, Sendable {
             self.smallPhotoLocalPath = nil
         }
 
-        switch tdUser.status {
-        case .userStatusOnline:
-            self.statusText = "在线"
-        case .userStatusOffline(let info):
-            let date = Foundation.Date(timeIntervalSince1970: TimeInterval(info.wasOnline))
-            let formatter = RelativeDateTimeFormatter()
-            formatter.unitsStyle = .short
-            self.statusText = "上次在线 \(formatter.localizedString(for: date, relativeTo: .now))"
-        case .userStatusRecently:
-            self.statusText = "近期在线"
-        case .userStatusLastWeek:
-            self.statusText = "一周内在线"
-        case .userStatusLastMonth:
-            self.statusText = "一个月内在线"
-        case .userStatusEmpty:
-            self.statusText = ""
+        if isBot {
+            self.statusText = "机器人"
+        } else {
+            switch tdUser.status {
+            case .userStatusOnline:
+                self.statusText = "在线"
+            case .userStatusOffline(let info):
+                let date = Foundation.Date(timeIntervalSince1970: TimeInterval(info.wasOnline))
+                let formatter = RelativeDateTimeFormatter()
+                formatter.unitsStyle = .short
+                self.statusText = "上次在线 \(formatter.localizedString(for: date, relativeTo: .now))"
+            case .userStatusRecently:
+                self.statusText = "近期在线"
+            case .userStatusLastWeek:
+                self.statusText = "一周内在线"
+            case .userStatusLastMonth:
+                self.statusText = "一个月内在线"
+            case .userStatusEmpty:
+                self.statusText = ""
+            }
         }
     }
 }

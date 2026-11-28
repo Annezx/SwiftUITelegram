@@ -40,6 +40,7 @@ struct ScrollToMessageRequest: Equatable {
 final class ConversationStore {
     private let service: TDLibService
     private var loadTask: Task<Void, Never>?
+    private var botContextTask: Task<Void, Never>?
     private var highlightClearTask: Task<Void, Never>?
     private var noticeClearTask: Task<Void, Never>?
     private var inFlightReplyFetchIds: Set<Int64> = []
@@ -48,6 +49,8 @@ final class ConversationStore {
     private var scrollToMessageToken: Int = 0
 
     private(set) var activeChatId: Int64?
+    private(set) var activeChatKind: ChatKind?
+    private(set) var activeBotUserId: Int64?
     private(set) var messages: [MessageItem] = []
     private(set) var isLoadingInitial: Bool = false
     private(set) var isLoadingOlder: Bool = false
@@ -64,15 +67,28 @@ final class ConversationStore {
     private(set) var scrollToMessageRequest: ScrollToMessageRequest?
     private(set) var isSelectionMode: Bool = false
     private(set) var selectedMessageIds: Set<Int64> = []
+    private(set) var botCommands: [BotCommandItem] = []
+    private(set) var botMenuButton: BotMenuButtonItem?
+    private(set) var botDescription: String = ""
+    private(set) var activeReplyKeyboard: ReplyKeyboardMarkup?
+    private(set) var activeInputPlaceholder: String?
+    private(set) var inFlightCallbackButtonKey: String?
 
     var draftText: String = ""
     var sendAsDocument: Bool = false
     var sendWithSpoiler: Bool = false
+    var isReplyKeyboardVisible: Bool = false
     var errorMessage: String?
     var noticeMessage: String?
+    var callbackAlert: BotCallbackAlert?
+    var pendingPasswordCallback: BotCallbackPasswordRequest?
 
     init(service: TDLibService) {
         self.service = service
+    }
+
+    var isActiveChatBot: Bool {
+        activeBotUserId != nil
     }
 
     var timelineEntries: [ConversationTimelineEntry] {
@@ -111,7 +127,10 @@ final class ConversationStore {
 
         let previousChatId = activeChatId
         activeChatId = chatId
+        activeChatKind = nil
+        activeBotUserId = nil
         loadTask?.cancel()
+        botContextTask?.cancel()
         highlightClearTask?.cancel()
         noticeClearTask?.cancel()
         messages = []
@@ -126,6 +145,15 @@ final class ConversationStore {
         scrollToMessageRequest = nil
         isSelectionMode = false
         selectedMessageIds = []
+        botCommands = []
+        botMenuButton = nil
+        botDescription = ""
+        activeReplyKeyboard = nil
+        isReplyKeyboardVisible = false
+        activeInputPlaceholder = nil
+        inFlightCallbackButtonKey = nil
+        callbackAlert = nil
+        pendingPasswordCallback = nil
         clearPendingAttachments()
         errorMessage = nil
         noticeMessage = nil
@@ -143,6 +171,9 @@ final class ConversationStore {
 
         loadTask = Task {
             await loadInitialHistory(for: chatId)
+        }
+        botContextTask = Task {
+            await loadBotAndMarkupContext(for: chatId)
         }
     }
 
@@ -751,6 +782,355 @@ final class ConversationStore {
         }
     }
 
+    // MARK: - Bot Menu, Commands & Keyboard Actions
+
+    func toggleReplyKeyboard() {
+        guard activeReplyKeyboard != nil else { return }
+        isReplyKeyboardVisible.toggle()
+    }
+
+    func sendImmediateText(_ text: String, replyToMessageId: Int64? = nil) async {
+        guard let chatId = activeChatId else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        let tdReplyTo = replyToMessageId.map { TDLibService.makeReplyToMessage(messageId: $0) }
+        errorMessage = nil
+        do {
+            let sentMessage = try await service.sendTextMessage(
+                chatId: chatId,
+                text: trimmed,
+                replyTo: tdReplyTo
+            )
+            guard activeChatId == chatId else { return }
+            let item = MessageItem(tdMessage: sentMessage)
+            upsertMessage(item)
+            prefetchPermissions(for: [item])
+            scrollToBottomTrigger += 1
+        } catch {
+            if activeChatId == chatId {
+                errorMessage = TDLibErrorHelper.userFacingMessage(for: error)
+            }
+        }
+    }
+
+    func sendBotCommand(
+        _ command: BotCommandItem,
+        botUsername: String? = nil,
+        clearDraft: Bool = false
+    ) async {
+        let text: String
+        if activeBotUserId == nil,
+           let botUsername, !botUsername.isEmpty,
+           botCommands.filter({ $0.command == command.command }).count > 1
+        {
+            text = "\(command.slashCommand)@\(botUsername)"
+        } else {
+            text = command.slashCommand
+        }
+
+        if clearDraft {
+            draftText = ""
+        }
+        await sendImmediateText(text)
+    }
+
+    func fillBotCommand(_ command: BotCommandItem, botUsername: String? = nil) {
+        let text: String
+        if activeBotUserId == nil,
+           let botUsername, !botUsername.isEmpty,
+           botCommands.filter({ $0.command == command.command }).count > 1
+        {
+            text = "\(command.slashCommand)@\(botUsername) "
+        } else {
+            text = "\(command.slashCommand) "
+        }
+        draftText = text
+        composerFocusTrigger += 1
+    }
+
+    func sendBotStart() async {
+        guard let chatId = activeChatId else { return }
+        if let botUserId = activeBotUserId {
+            errorMessage = nil
+            do {
+                let sentMessage = try await service.sendBotStartMessage(
+                    botUserId: botUserId,
+                    chatId: chatId,
+                    parameter: ""
+                )
+                guard activeChatId == chatId else { return }
+                let item = MessageItem(tdMessage: sentMessage)
+                upsertMessage(item)
+                prefetchPermissions(for: [item])
+                scrollToBottomTrigger += 1
+                return
+            } catch {
+                // Fall back to sending literal /start text below.
+            }
+        }
+        await sendImmediateText("/start")
+    }
+
+    func openBotMenuWebApp() async {
+        guard let chatId = activeChatId,
+              let menuButton = botMenuButton,
+              menuButton.hasCustomWebApp
+        else {
+            return
+        }
+
+        if let botUserId = activeBotUserId {
+            if let webAppInfo = try? await service.openWebApp(
+                chatId: chatId,
+                botUserId: botUserId,
+                url: menuButton.url
+            ), let resolvedURL = URL(string: webAppInfo.url.url) {
+                NSWorkspace.shared.open(resolvedURL)
+                return
+            }
+            if let webAppUrl = try? await service.getWebAppUrl(
+                botUserId: botUserId,
+                url: menuButton.url
+            ), let resolvedURL = URL(string: webAppUrl.url) {
+                NSWorkspace.shared.open(resolvedURL)
+                return
+            }
+        }
+
+        openExternalURLString(menuButton.url)
+    }
+
+    func handleReplyKeyboardButton(_ button: ReplyKeyboardButtonItem) async {
+        guard let chatId = activeChatId else { return }
+        let replyTargetId: Int64? = (activeReplyKeyboard?.forceReply == true)
+            ? activeReplyKeyboard?.messageId
+            : nil
+
+        switch button.action {
+        case .text:
+            if activeReplyKeyboard?.oneTime == true && activeReplyKeyboard?.isPersistent == false {
+                isReplyKeyboardVisible = false
+            }
+            await sendImmediateText(button.text, replyToMessageId: replyTargetId)
+
+        case .webApp(let url):
+            if let botUserId = activeBotUserId {
+                if let webAppUrl = try? await service.getWebAppUrl(botUserId: botUserId, url: url),
+                   let resolved = URL(string: webAppUrl.url)
+                {
+                    NSWorkspace.shared.open(resolved)
+                    return
+                }
+                if let webAppInfo = try? await service.openWebApp(chatId: chatId, botUserId: botUserId, url: url),
+                   let resolved = URL(string: webAppInfo.url.url)
+                {
+                    NSWorkspace.shared.open(resolved)
+                    return
+                }
+            }
+            openExternalURLString(url)
+
+        case .requestPhoneNumber:
+            showTransientNotice("桌面端暂不支持通过机器人键盘直接发送手机号。")
+        case .requestLocation:
+            showTransientNotice("桌面端暂不支持通过机器人键盘直接发送实时位置。")
+        case .requestPoll:
+            showTransientNotice("暂不支持通过机器人键盘创建投票。")
+        case .requestUsers, .requestChat:
+            showTransientNotice("暂不支持通过机器人键盘选择并分享用户或群组。")
+        case .requestManagedBot:
+            showTransientNotice("暂不支持在当前客户端创建托管机器人。")
+        }
+    }
+
+    func handleInlineKeyboardButton(
+        _ button: InlineKeyboardButtonItem,
+        on message: MessageItem,
+        openUserChat: @escaping (Int64) -> Void,
+        resolveBotUsername: @escaping (Int64) -> String?
+    ) async {
+        let chatId = message.chatId
+        let buttonKey = "\(message.id):\(button.id)"
+        guard activeChatId == chatId, !button.action.isDisabled else { return }
+
+        switch button.action {
+        case .callback(let data):
+            await performCallbackQuery(
+                chatId: chatId,
+                messageId: message.id,
+                buttonKey: buttonKey,
+                buttonTitle: button.text,
+                payload: .callbackQueryPayloadData(CallbackQueryPayloadData(data: data))
+            )
+
+        case .callbackWithPassword(let data):
+            pendingPasswordCallback = BotCallbackPasswordRequest(
+                chatId: chatId,
+                messageId: message.id,
+                buttonId: button.id,
+                buttonText: button.text,
+                payloadData: data
+            )
+
+        case .url(let urlString):
+            openExternalURLString(urlString)
+
+        case .loginUrl(let buttonId, let fallbackURL, _):
+            inFlightCallbackButtonKey = buttonKey
+            defer {
+                if inFlightCallbackButtonKey == buttonKey {
+                    inFlightCallbackButtonKey = nil
+                }
+            }
+            if let httpUrl = try? await service.getLoginUrl(
+                chatId: chatId,
+                messageId: message.id,
+                buttonId: buttonId,
+                allowWriteAccess: false
+            ) {
+                openExternalURLString(httpUrl.url)
+            } else {
+                openExternalURLString(fallbackURL)
+            }
+
+        case .webApp(let urlString):
+            inFlightCallbackButtonKey = buttonKey
+            defer {
+                if inFlightCallbackButtonKey == buttonKey {
+                    inFlightCallbackButtonKey = nil
+                }
+            }
+            let botUserId = resolvedBotUserId(for: message)
+            if let botUserId,
+               let webAppInfo = try? await service.openWebApp(
+                chatId: chatId,
+                botUserId: botUserId,
+                url: urlString
+               ),
+               let resolvedURL = URL(string: webAppInfo.url.url)
+            {
+                NSWorkspace.shared.open(resolvedURL)
+                return
+            }
+            openExternalURLString(urlString)
+
+        case .switchInline(let query, _):
+            let botUserId = resolvedBotUserId(for: message)
+            let botUsername = botUserId.flatMap { resolveBotUsername($0) }
+            if let botUsername, !botUsername.isEmpty {
+                let prefix = "@\(botUsername) "
+                draftText = query.isEmpty ? prefix : "\(prefix)\(query)"
+            } else {
+                draftText = query
+            }
+            composerFocusTrigger += 1
+
+        case .copyText(let text):
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            showTransientNotice("已复制内容到剪贴板")
+
+        case .user(let userId):
+            openUserChat(userId)
+
+        case .callbackGame:
+            await performCallbackQuery(
+                chatId: chatId,
+                messageId: message.id,
+                buttonKey: buttonKey,
+                buttonTitle: button.text,
+                payload: .callbackQueryPayloadGame(CallbackQueryPayloadGame(gameShortName: ""))
+            )
+
+        case .buy:
+            showTransientNotice("暂不支持应用内支付，请在官方客户端完成付款。")
+
+        case .disabled:
+            break
+        }
+    }
+
+    func submitPasswordCallback(_ request: BotCallbackPasswordRequest, password: String) async -> String? {
+        let buttonKey = "\(request.messageId):\(request.buttonId)"
+        let payload = CallbackQueryPayload.callbackQueryPayloadDataWithPassword(
+            CallbackQueryPayloadDataWithPassword(data: request.payloadData, password: password)
+        )
+        return await performCallbackQuery(
+            chatId: request.chatId,
+            messageId: request.messageId,
+            buttonKey: buttonKey,
+            buttonTitle: request.buttonText,
+            payload: payload
+        )
+    }
+
+    @discardableResult
+    private func performCallbackQuery(
+        chatId: Int64,
+        messageId: Int64,
+        buttonKey: String,
+        buttonTitle: String,
+        payload: CallbackQueryPayload
+    ) async -> String? {
+        guard inFlightCallbackButtonKey == nil else { return nil }
+        inFlightCallbackButtonKey = buttonKey
+        defer {
+            if inFlightCallbackButtonKey == buttonKey {
+                inFlightCallbackButtonKey = nil
+            }
+        }
+
+        do {
+            let answer = try await service.getCallbackQueryAnswer(
+                chatId: chatId,
+                messageId: messageId,
+                payload: payload
+            )
+            guard activeChatId == chatId else { return nil }
+
+            let trimmedText = answer.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedText.isEmpty {
+                if answer.showAlert {
+                    callbackAlert = BotCallbackAlert(
+                        title: buttonTitle.isEmpty ? "机器人提示" : buttonTitle,
+                        message: trimmedText
+                    )
+                } else {
+                    showTransientNotice(trimmedText)
+                }
+            }
+
+            let trimmedURL = answer.url.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedURL.isEmpty {
+                openExternalURLString(trimmedURL)
+            }
+            return nil
+        } catch {
+            let message = TDLibErrorHelper.userFacingMessage(for: error)
+            if let message, !message.isEmpty {
+                showTransientNotice(message)
+            }
+            return message
+        }
+    }
+
+    private func resolvedBotUserId(for message: MessageItem) -> Int64? {
+        if case .user(let userId) = message.sender {
+            return userId
+        }
+        return activeBotUserId
+    }
+
+    private func openExternalURLString(_ rawURL: String) {
+        let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let url = URL(string: trimmed) else {
+            showTransientNotice("无效链接地址")
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
     // MARK: - TDLib Updates
 
     func handleUpdate(_ update: Update) {
@@ -808,12 +1188,47 @@ final class ConversationStore {
             let editDate = info.editDate > 0
                 ? Foundation.Date(timeIntervalSince1970: TimeInterval(info.editDate))
                 : nil
+            let updatedReplyMarkup = info.replyMarkup.map {
+                MessageReplyMarkup(from: $0, messageId: info.messageId)
+            }
             if let index = messages.firstIndex(where: { $0.id == info.messageId }) {
                 messages[index].editDate = editDate
+                messages[index].replyMarkup = updatedReplyMarkup
             }
             if case .loaded(var replied) = repliedMessages[info.messageId] {
                 replied.editDate = editDate
+                replied.replyMarkup = updatedReplyMarkup
                 repliedMessages[info.messageId] = .loaded(replied)
+            }
+
+        case .updateChatReplyMarkup(let info):
+            guard info.chatId == activeChatId else { return }
+            if let tdMessage = info.replyMarkupMessage {
+                let item = MessageItem(tdMessage: tdMessage)
+                applyChatReplyMarkup(item.replyMarkup, sourceMessage: item)
+            } else {
+                clearChatReplyMarkup()
+            }
+
+        case .updateUserFullInfo(let info):
+            if let activeBotUserId, info.userId == activeBotUserId {
+                applyBotInfo(info.userFullInfo.botInfo, botUserId: info.userId)
+            } else if case .privateUser(let userId) = activeChatKind,
+                      info.userId == userId,
+                      let botInfo = info.userFullInfo.botInfo
+            {
+                activeBotUserId = userId
+                applyBotInfo(botInfo, botUserId: userId)
+            }
+
+        case .updateBasicGroupFullInfo(let info):
+            if case .basicGroup(let groupId) = activeChatKind, groupId == info.basicGroupId {
+                applyGroupBotCommands(info.basicGroupFullInfo.botCommands)
+            }
+
+        case .updateSupergroupFullInfo(let info):
+            if case .supergroup(let supergroupId) = activeChatKind, supergroupId == info.supergroupId {
+                applyGroupBotCommands(info.supergroupFullInfo.botCommands)
             }
 
         case .updateMessageIsPinned(let info):
@@ -827,6 +1242,9 @@ final class ConversationStore {
             let deletedIds = Set(info.messageIds)
             messages.removeAll { deletedIds.contains($0.id) }
             handleDeletedMessageIds(deletedIds)
+            if let kb = activeReplyKeyboard, deletedIds.contains(kb.messageId) {
+                clearChatReplyMarkup()
+            }
 
         default:
             break
@@ -835,9 +1253,12 @@ final class ConversationStore {
 
     func reset() {
         loadTask?.cancel()
+        botContextTask?.cancel()
         highlightClearTask?.cancel()
         noticeClearTask?.cancel()
         activeChatId = nil
+        activeChatKind = nil
+        activeBotUserId = nil
         messages = []
         draftText = ""
         savedDraftBeforeEditing = ""
@@ -850,6 +1271,15 @@ final class ConversationStore {
         scrollToMessageRequest = nil
         isSelectionMode = false
         selectedMessageIds = []
+        botCommands = []
+        botMenuButton = nil
+        botDescription = ""
+        activeReplyKeyboard = nil
+        isReplyKeyboardVisible = false
+        activeInputPlaceholder = nil
+        inFlightCallbackButtonKey = nil
+        callbackAlert = nil
+        pendingPasswordCallback = nil
         clearPendingAttachments()
         errorMessage = nil
         noticeMessage = nil
@@ -858,6 +1288,134 @@ final class ConversationStore {
         isLoadingOlder = false
         isSending = false
         isPreparingAttachments = false
+    }
+
+    // MARK: - Private Bot Context & Reply Markup Helpers
+
+    private func loadBotAndMarkupContext(for chatId: Int64) async {
+        guard let tdChat = try? await service.getChat(chatId: chatId),
+              !Task.isCancelled,
+              activeChatId == chatId
+        else {
+            return
+        }
+
+        let kind = ChatKind(from: tdChat.type)
+        activeChatKind = kind
+
+        if tdChat.replyMarkupMessageId != 0 {
+            if let existing = messages.first(where: { $0.id == tdChat.replyMarkupMessageId }) {
+                applyChatReplyMarkup(existing.replyMarkup, sourceMessage: existing)
+            } else if let tdMarkupMsg = try? await service.getMessage(
+                chatId: chatId,
+                messageId: tdChat.replyMarkupMessageId
+            ), !Task.isCancelled, activeChatId == chatId {
+                let item = MessageItem(tdMessage: tdMarkupMsg)
+                applyChatReplyMarkup(item.replyMarkup, sourceMessage: item)
+            }
+        }
+
+        switch kind {
+        case .privateUser(let userId):
+            if let tdUser = try? await service.getUser(userId: userId),
+               !Task.isCancelled,
+               activeChatId == chatId,
+               case .userTypeBot = tdUser.type
+            {
+                activeBotUserId = userId
+                if let fullInfo = try? await service.getUserFullInfo(userId: userId),
+                   !Task.isCancelled,
+                   activeChatId == chatId
+                {
+                    applyBotInfo(fullInfo.botInfo, botUserId: userId)
+                }
+            }
+
+        case .basicGroup(let groupId):
+            if let fullInfo = try? await service.getBasicGroupFullInfo(basicGroupId: groupId),
+               !Task.isCancelled,
+               activeChatId == chatId
+            {
+                applyGroupBotCommands(fullInfo.botCommands)
+            }
+
+        case .supergroup(let supergroupId):
+            if let fullInfo = try? await service.getSupergroupFullInfo(supergroupId: supergroupId),
+               !Task.isCancelled,
+               activeChatId == chatId
+            {
+                applyGroupBotCommands(fullInfo.botCommands)
+            }
+
+        case .channel, .secret:
+            break
+        }
+    }
+
+    private func applyBotInfo(_ botInfo: BotInfo?, botUserId: Int64) {
+        guard let botInfo else {
+            botCommands = []
+            botMenuButton = nil
+            botDescription = ""
+            return
+        }
+
+        botCommands = botInfo.commands.map { BotCommandItem(tdCommand: $0, botUserId: botUserId) }
+        if let menuBtn = botInfo.menuButton {
+            let mapped = BotMenuButtonItem(tdMenuButton: menuBtn)
+            botMenuButton = mapped.hasCustomWebApp ? mapped : nil
+        } else {
+            botMenuButton = nil
+        }
+        botDescription = botInfo.description.isEmpty ? botInfo.shortDescription : botInfo.description
+    }
+
+    private func applyGroupBotCommands(_ groupCommands: [BotCommands]) {
+        var flattened: [BotCommandItem] = []
+        for entry in groupCommands {
+            for cmd in entry.commands {
+                flattened.append(BotCommandItem(tdCommand: cmd, botUserId: entry.botUserId))
+            }
+        }
+        botCommands = flattened
+    }
+
+    private func applyChatReplyMarkup(_ markup: MessageReplyMarkup?, sourceMessage: MessageItem?) {
+        guard let markup else {
+            clearChatReplyMarkup()
+            return
+        }
+
+        switch markup {
+        case .showKeyboard(let keyboard):
+            if keyboard.isEmpty {
+                clearChatReplyMarkup()
+            } else {
+                activeReplyKeyboard = keyboard
+                isReplyKeyboardVisible = true
+                activeInputPlaceholder = keyboard.inputFieldPlaceholder.isEmpty ? nil : keyboard.inputFieldPlaceholder
+            }
+
+        case .removeKeyboard:
+            clearChatReplyMarkup()
+
+        case .forceReply(let placeholder, _):
+            activeReplyKeyboard = nil
+            isReplyKeyboardVisible = false
+            activeInputPlaceholder = placeholder.isEmpty ? nil : placeholder
+            if let sourceMessage, composerMode == .normal {
+                composerMode = .replying(sourceMessage)
+            }
+
+        case .inlineKeyboard:
+            clearChatReplyMarkup()
+        }
+    }
+
+    private func clearChatReplyMarkup() {
+        activeReplyKeyboard = nil
+        isReplyKeyboardVisible = false
+        activeInputPlaceholder = nil
     }
 
     // MARK: - Private Edit & Media Dispatch

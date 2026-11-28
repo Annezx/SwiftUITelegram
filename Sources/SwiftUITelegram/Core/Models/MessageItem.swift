@@ -503,6 +503,7 @@ struct MessageItem: Identifiable, Equatable, Hashable, Sendable {
     let mediaAlbumId: Int64
     var replyTo: MessageReplyReference?
     var forwardInfo: MessageForwardMetadata?
+    var replyMarkup: MessageReplyMarkup?
     var content: MessageDisplayContent
     var deliveryStatus: MessageDeliveryStatus
 
@@ -517,6 +518,7 @@ struct MessageItem: Identifiable, Equatable, Hashable, Sendable {
         mediaAlbumId: Int64 = 0,
         replyTo: MessageReplyReference? = nil,
         forwardInfo: MessageForwardMetadata? = nil,
+        replyMarkup: MessageReplyMarkup? = nil,
         content: MessageDisplayContent,
         deliveryStatus: MessageDeliveryStatus = .sent
     ) {
@@ -530,6 +532,7 @@ struct MessageItem: Identifiable, Equatable, Hashable, Sendable {
         self.mediaAlbumId = mediaAlbumId
         self.replyTo = replyTo
         self.forwardInfo = forwardInfo
+        self.replyMarkup = replyMarkup
         self.content = content
         self.deliveryStatus = deliveryStatus
     }
@@ -545,6 +548,7 @@ struct MessageItem: Identifiable, Equatable, Hashable, Sendable {
         self.mediaAlbumId = tdMessage.mediaAlbumId.rawValue
         self.replyTo = tdMessage.replyTo.map(MessageReplyReference.init(from:))
         self.forwardInfo = tdMessage.forwardInfo.map(MessageForwardMetadata.init(from:))
+        self.replyMarkup = tdMessage.replyMarkup.map { MessageReplyMarkup(from: $0, messageId: tdMessage.id) }
         self.content = MessageDisplayContent(from: tdMessage.content)
         self.deliveryStatus = MessageDeliveryStatus(from: tdMessage.sendingState)
     }
@@ -625,6 +629,14 @@ enum ConversationTimelineEntry: Identifiable, Equatable, Hashable, Sendable {
         case .album(_, let messages):
             return messages.first(where: { !$0.content.captionText.isEmpty }) ?? messages[0]
         }
+    }
+
+    /// Returns the message carrying an inline keyboard for this timeline entry, if any.
+    var inlineKeyboardSourceMessage: MessageItem? {
+        if tailMessage.replyMarkup?.inlineKeyboardRows != nil {
+            return tailMessage
+        }
+        return allMessages.last(where: { $0.replyMarkup?.inlineKeyboardRows != nil })
     }
 
     func contains(messageId: Int64) -> Bool {
