@@ -15,11 +15,13 @@ struct ConversationView: View {
     @State private var quickLookURL: URL?
     @State private var deleteRequest: DeleteMessagesRequest?
     @State private var forwardRequest: ForwardMessagesRequest?
+    @State private var stickerPackSheet: StickerPackSheetRequest?
     @State private var isDropTargeted: Bool = false
     @State private var keyEventMonitor: Any?
 
     private var activeBannerError: String? {
         appStore.conversation.errorMessage
+            ?? appStore.stickers.errorMessage
             ?? appStore.audioPlayer.errorMessage
             ?? voiceRecorder.errorMessage
     }
@@ -89,6 +91,7 @@ struct ConversationView: View {
                     Spacer()
                     Button {
                         conversation.errorMessage = nil
+                        appStore.stickers.errorMessage = nil
                         appStore.audioPlayer.errorMessage = nil
                         voiceRecorder.errorMessage = nil
                     } label: {
@@ -128,6 +131,9 @@ struct ConversationView: View {
                     activeReplyKeyboard: conversation.activeReplyKeyboard,
                     isReplyKeyboardVisible: conversation.isReplyKeyboardVisible,
                     customInputPlaceholder: conversation.activeInputPlaceholder,
+                    chatId: chat.id,
+                    suggestedStickers: appStore.stickers.quickSuggestedStickers,
+                    suggestedStickerEmoji: appStore.stickers.quickSuggestionEmoji,
                     botUsernameProvider: { botUserId in
                         appStore.chatList.username(forUserId: botUserId)
                     },
@@ -155,6 +161,21 @@ struct ConversationView: View {
                     },
                     onSendVoiceNote: { recorded in
                         Task { await conversation.sendVoiceNote(recorded) }
+                    },
+                    onInsertEmoji: { emoji in
+                        conversation.insertEmoji(emoji)
+                    },
+                    onSendSticker: { sticker, clearDraft in
+                        appStore.stickers.clearQuickSuggestions()
+                        Task {
+                            await conversation.sendSticker(sticker, clearDraft: clearDraft)
+                        }
+                    },
+                    onOpenStickerPack: { setId in
+                        stickerPackSheet = StickerPackSheetRequest(id: setId)
+                    },
+                    onDismissStickerSuggestions: {
+                        appStore.stickers.clearQuickSuggestions()
                     },
                     onSendBotCommand: { command, clearDraft in
                         let username = command.botUserId.flatMap { appStore.chatList.username(forUserId: $0) }
@@ -245,6 +266,12 @@ struct ConversationView: View {
                 await appStore.conversation.submitPasswordCallback(request, password: password)
             }
         }
+        .sheet(item: $stickerPackSheet) { request in
+            StickerPackSheet(setId: request.setId) { sticker in
+                Task { await appStore.conversation.sendSticker(sticker) }
+            }
+            .environment(appStore)
+        }
         .alert(
             conversation.callbackAlert?.title ?? "提示",
             isPresented: Binding(
@@ -265,6 +292,18 @@ struct ConversationView: View {
         .onDisappear {
             removeKeyEventMonitor()
             voiceRecorder.cancelRecording()
+            appStore.stickers.clearQuickSuggestions()
+        }
+        .onChange(of: chat.id) { _, _ in
+            stickerPackSheet = nil
+            appStore.stickers.clearQuickSuggestions()
+        }
+        .onChange(of: conversation.draftText) { _, newValue in
+            if !conversation.composerMode.isEditing && conversation.pendingAttachments.isEmpty {
+                appStore.stickers.updateQuickSuggestions(forDraftText: newValue, chatId: chat.id)
+            } else {
+                appStore.stickers.clearQuickSuggestions()
+            }
         }
         .onChange(of: conversation.scrollToBottomTrigger) { _, _ in
             withAnimation(.snappy(duration: 0.2)) {
@@ -503,6 +542,9 @@ struct ConversationView: View {
                                         }
                                     )
                                 }
+                            },
+                            onOpenStickerPack: { setId in
+                                stickerPackSheet = StickerPackSheetRequest(id: setId)
                             }
                         )
                         .id(entry.id)
@@ -760,6 +802,7 @@ struct ConversationView: View {
             guard lightboxSession == nil,
                   deleteRequest == nil,
                   forwardRequest == nil,
+                  stickerPackSheet == nil,
                   appStore.conversation.pendingPasswordCallback == nil,
                   appStore.conversation.callbackAlert == nil,
                   !voiceRecorder.isRecording

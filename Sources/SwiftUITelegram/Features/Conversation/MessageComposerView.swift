@@ -24,6 +24,9 @@ struct MessageComposerView: View {
     let activeReplyKeyboard: ReplyKeyboardMarkup?
     let isReplyKeyboardVisible: Bool
     let customInputPlaceholder: String?
+    let chatId: Int64?
+    let suggestedStickers: [StickerItem]
+    let suggestedStickerEmoji: String
     let botUsernameProvider: (Int64) -> String?
 
     let onPickMedia: () -> Void
@@ -35,6 +38,10 @@ struct MessageComposerView: View {
     let onTapComposerContext: () -> Void
     let onSend: () -> Void
     let onSendVoiceNote: (RecordedVoiceNote) -> Void
+    let onInsertEmoji: (String) -> Void
+    let onSendSticker: (StickerItem, Bool) -> Void
+    let onOpenStickerPack: (Int64) -> Void
+    let onDismissStickerSuggestions: () -> Void
     let onSendBotCommand: (BotCommandItem, Bool) -> Void
     let onFillBotCommand: (BotCommandItem) -> Void
     let onSendBuiltInBotCommand: (String) -> Void
@@ -43,6 +50,7 @@ struct MessageComposerView: View {
     let onToggleReplyKeyboard: () -> Void
 
     @FocusState private var isTextFieldFocused: Bool
+    @State private var isShowingStickerEmojiPicker: Bool = false
 
     private var canSend: Bool {
         if case .editing(let target) = composerMode {
@@ -122,6 +130,20 @@ struct MessageComposerView: View {
                     }
                 )
                 Divider()
+            } else if !recorder.isRecording,
+                      !composerMode.isEditing,
+                      pendingAttachments.isEmpty,
+                      !suggestedStickers.isEmpty
+            {
+                StickerSuggestionStrip(
+                    emoji: suggestedStickerEmoji,
+                    stickers: suggestedStickers,
+                    onSendSticker: { sticker in
+                        onSendSticker(sticker, true)
+                    },
+                    onDismiss: onDismissStickerSuggestions
+                )
+                Divider()
             }
 
             if !recorder.isRecording && composerMode != .normal {
@@ -155,6 +177,14 @@ struct MessageComposerView: View {
         .background(.bar)
         .onChange(of: focusTrigger) { _, _ in
             isTextFieldFocused = true
+        }
+        .onChange(of: chatId) { _, _ in
+            isShowingStickerEmojiPicker = false
+        }
+        .onChange(of: recorder.isRecording) { _, recording in
+            if recording {
+                isShowingStickerEmojiPicker = false
+            }
         }
     }
 
@@ -341,6 +371,44 @@ struct MessageComposerView: View {
                 if canSend {
                     onSend()
                 }
+            }
+
+            Button {
+                isShowingStickerEmojiPicker.toggle()
+            } label: {
+                Image(systemName: isShowingStickerEmojiPicker ? "face.smiling.fill" : "face.smiling")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(isShowingStickerEmojiPicker ? Color.accentColor : Color.secondary)
+                    .frame(width: LayoutMetrics.composerControlHeight, height: LayoutMetrics.composerControlHeight)
+                    .background(
+                        isShowingStickerEmojiPicker
+                            ? Color.accentColor.opacity(0.14)
+                            : Color.clear,
+                        in: Circle()
+                    )
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help(composerMode.isEditing ? "插入 Emoji 表情" : "贴纸与 Emoji 表情面板")
+            .popover(isPresented: $isShowingStickerEmojiPicker, arrowEdge: .top) {
+                StickerEmojiPickerView(
+                    chatId: chatId,
+                    allowStickers: !composerMode.isEditing,
+                    onSelectEmoji: { emoji in
+                        onInsertEmoji(emoji)
+                    },
+                    onSendSticker: { sticker, keepOpen in
+                        if !keepOpen {
+                            isShowingStickerEmojiPicker = false
+                        }
+                        onSendSticker(sticker, false)
+                    },
+                    onOpenStickerPack: { setId in
+                        isShowingStickerEmojiPicker = false
+                        onOpenStickerPack(setId)
+                    }
+                )
+                .environment(appStore)
             }
 
             if !composerMode.isEditing && activeReplyKeyboard != nil {

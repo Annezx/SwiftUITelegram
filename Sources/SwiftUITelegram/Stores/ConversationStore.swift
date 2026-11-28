@@ -698,6 +698,58 @@ final class ConversationStore {
         }
     }
 
+    func insertEmoji(_ emoji: String) {
+        guard !emoji.isEmpty else { return }
+        draftText.append(emoji)
+        composerFocusTrigger += 1
+    }
+
+    func sendSticker(_ sticker: StickerItem, clearDraft: Bool = false) async {
+        guard let chatId = activeChatId, !isSending else { return }
+        if composerMode.isEditing {
+            cancelComposerMode()
+        }
+
+        let replyTarget = composerMode.replyingMessage
+        let tdReplyTo = replyTarget.map { TDLibService.makeReplyToMessage(messageId: $0.id) }
+        let savedDraft = draftText
+
+        if clearDraft {
+            draftText = ""
+        }
+        composerMode = .normal
+        errorMessage = nil
+        isSending = true
+        defer { isSending = false }
+
+        do {
+            let sentMessage = try await service.sendSticker(
+                chatId: chatId,
+                fileId: sticker.file.fileId,
+                remoteFileId: sticker.remoteFileId,
+                width: sticker.width,
+                height: sticker.height,
+                emoji: sticker.emoji,
+                replyTo: tdReplyTo
+            )
+            guard activeChatId == chatId else { return }
+            let item = MessageItem(tdMessage: sentMessage)
+            upsertMessage(item)
+            prefetchPermissions(for: [item])
+            scrollToBottomTrigger += 1
+        } catch {
+            if activeChatId == chatId {
+                if clearDraft {
+                    draftText = savedDraft
+                }
+                if let replyTarget {
+                    composerMode = .replying(replyTarget)
+                }
+                errorMessage = TDLibErrorHelper.userFacingMessage(for: error)
+            }
+        }
+    }
+
     @discardableResult
     func deleteMessages(_ messageIds: [Int64], revoke: Bool) async -> Bool {
         guard let chatId = activeChatId, !messageIds.isEmpty else { return false }

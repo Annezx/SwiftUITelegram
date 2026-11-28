@@ -118,6 +118,15 @@ enum ThumbnailMediaFormat: Equatable, Hashable, Sendable {
         }
     }
 
+    var stickerFormat: StickerMediaFormat? {
+        switch self {
+        case .webp: return .webp
+        case .tgs: return .tgs
+        case .webm: return .webm
+        case .jpeg, .png, .gif, .mpeg4: return nil
+        }
+    }
+
     init(tdFormat: ThumbnailFormat) {
         switch tdFormat {
         case .thumbnailFormatJpeg: self = .jpeg
@@ -176,6 +185,26 @@ enum StickerMediaFormat: Equatable, Hashable, Sendable {
         case .tgs: return "动态贴纸"
         case .webm: return "视频贴纸"
         }
+    }
+
+    var fileExtension: String {
+        switch self {
+        case .webp: return "webp"
+        case .tgs: return "tgs"
+        case .webm: return "webm"
+        }
+    }
+
+    var mimeType: String {
+        switch self {
+        case .webp: return "image/webp"
+        case .tgs: return "application/x-tgsticker"
+        case .webm: return "video/webm"
+        }
+    }
+
+    var isAnimated: Bool {
+        self != .webp
     }
 }
 
@@ -295,12 +324,40 @@ struct AudioMedia: Equatable, Hashable, Sendable {
 }
 
 struct StickerMedia: Equatable, Hashable, Sendable {
+    let stickerId: Int64
+    let setId: Int64
     let file: MediaFileDescriptor
+    let remoteFileId: String
     let thumbnail: ThumbnailInfo?
     let emoji: String
     let width: Int
     let height: Int
     let format: StickerMediaFormat
+    let isAnimatedEmoji: Bool
+
+    init(
+        stickerId: Int64 = 0,
+        setId: Int64 = 0,
+        file: MediaFileDescriptor,
+        remoteFileId: String = "",
+        thumbnail: ThumbnailInfo?,
+        emoji: String,
+        width: Int,
+        height: Int,
+        format: StickerMediaFormat,
+        isAnimatedEmoji: Bool = false
+    ) {
+        self.stickerId = stickerId
+        self.setId = setId
+        self.file = file
+        self.remoteFileId = remoteFileId
+        self.thumbnail = thumbnail
+        self.emoji = emoji
+        self.width = width
+        self.height = height
+        self.format = format
+        self.isAnimatedEmoji = isAnimatedEmoji
+    }
 }
 
 struct LocationMedia: Equatable, Hashable, Sendable {

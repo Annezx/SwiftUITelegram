@@ -2,67 +2,60 @@ import AppKit
 import SwiftUI
 
 struct StickerMessageView: View {
-    @Environment(AppStore.self) private var appStore
-
     let media: StickerMedia
+    var onOpenStickerPack: ((Int64) -> Void)? = nil
+
+    @State private var replayTrigger: Int = 0
+    @State private var isPressed: Bool = false
 
     private var displaySize: CGSize {
         let w = CGFloat(max(media.width, 160))
         let h = CGFloat(max(media.height, 160))
-        let maxSide: CGFloat = 176
+        let maxSide: CGFloat = media.isAnimatedEmoji ? 148 : 176
         let scale = min(maxSide / w, maxSide / h)
-        return CGSize(width: max(88, (w * scale).rounded()), height: max(88, (h * scale).rounded()))
-    }
-
-    private var stickerImage: NSImage? {
-        if media.format == .webp, let full = appStore.fileCache.image(for: media.file) {
-            return full
-        }
-        if let thumb = media.thumbnail, thumb.format.isStaticImage,
-           let thumbImg = appStore.fileCache.image(for: thumb.file)
-        {
-            return thumbImg
-        }
-        return nil
+        return CGSize(
+            width: max(88, (w * scale).rounded()),
+            height: max(88, (h * scale).rounded())
+        )
     }
 
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            if let image = stickerImage {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: displaySize.width, height: displaySize.height)
+        AnimatedStickerSurfaceView(
+            media: media,
+            size: displaySize,
+            isPlaying: true,
+            firstFrameOnly: false,
+            replayTrigger: replayTrigger,
+            maxPixelSize: 288,
+            downloadPriority: 22,
+            allowWebKitFallback: true,
+            showDownloadSpinner: true
+        )
+        .scaleEffect(isPressed ? 0.94 : 1.0)
+        .animation(.spring(response: 0.24, dampingFraction: 0.65), value: isPressed)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if !media.isAnimatedEmoji, media.setId != 0, let onOpenStickerPack {
+                onOpenStickerPack(media.setId)
             } else {
-                VStack(spacing: 4) {
-                    Text(media.emoji.isEmpty ? "🙂" : media.emoji)
-                        .font(.system(size: 64))
-                    if let badge = media.format.badgeLabel {
-                        Text(badge)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
+                replayTrigger += 1
+                isPressed = true
+                Task {
+                    try? await Task.sleep(for: .milliseconds(140))
+                    isPressed = false
                 }
-                .frame(width: 120, height: 120)
             }
+        }
+        .help(tooltipText)
+    }
 
-            if stickerImage != nil, let badge = media.format.badgeLabel {
-                Text(badge)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(.black.opacity(0.48), in: Capsule())
-                    .padding(4)
-            }
+    private var tooltipText: String {
+        if !media.isAnimatedEmoji, media.setId != 0 {
+            return "点击查看贴纸包"
         }
-        .task(id: media.file.fileId) {
-            if media.format == .webp {
-                appStore.fileCache.ensureDownloaded(media.file, priority: 20)
-            }
-            if let thumb = media.thumbnail, thumb.format.isStaticImage {
-                appStore.fileCache.ensureDownloaded(thumb.file, priority: 22)
-            }
+        if media.format.isAnimated {
+            return "点击重新播放动画"
         }
+        return media.emoji.isEmpty ? "贴纸" : media.emoji
     }
 }
