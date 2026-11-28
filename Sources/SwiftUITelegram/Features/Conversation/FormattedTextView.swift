@@ -125,6 +125,12 @@ struct FormattedTextView: View {
             appStore.conversation.insertBotCommand(command)
             return .handled
 
+        case .openTelegramLink(let telegramURL):
+            Task {
+                await appStore.openTelegramURL(telegramURL)
+            }
+            return .handled
+
         case .openExternalURL(let externalURL):
             NSWorkspace.shared.open(externalURL)
             return .handled

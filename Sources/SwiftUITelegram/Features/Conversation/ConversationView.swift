@@ -60,7 +60,22 @@ struct ConversationView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
 
-                if !isNearBottom && !entries.isEmpty {
+                if conversation.isViewingHistoricalAnchor {
+                    Button {
+                        Task { await conversation.returnToLatestMessages() }
+                    } label: {
+                        Label("返回最新消息", systemImage: "arrow.down.to.line")
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(.regularMaterial, in: Capsule())
+                            .overlay(Capsule().strokeBorder(.separator, lineWidth: 0.5))
+                            .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(16)
+                    .transition(.scale.combined(with: .opacity))
+                } else if !isNearBottom && !entries.isEmpty {
                     Button {
                         withAnimation(.snappy(duration: 0.25)) {
                             scrollPosition.scrollTo(edge: .bottom)
@@ -79,6 +94,7 @@ struct ConversationView: View {
                 }
             }
             .animation(.easeInOut(duration: 0.18), value: isNearBottom)
+            .animation(.easeInOut(duration: 0.18), value: conversation.isViewingHistoricalAnchor)
             .animation(.easeInOut(duration: 0.2), value: conversation.noticeMessage)
 
             if let error = activeBannerError {
@@ -103,6 +119,16 @@ struct ConversationView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 6)
                 .background(.red.opacity(0.08))
+            }
+
+            if let pendingStart = conversation.pendingBotStart {
+                Divider()
+                pendingBotStartBanner(pendingStart, conversation: conversation)
+            }
+
+            if conversation.canJoinActiveChat {
+                Divider()
+                joinActiveChatBanner(conversation: conversation)
             }
 
             Divider()
@@ -430,6 +456,96 @@ struct ConversationView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, LayoutMetrics.composerVerticalPadding)
         .frame(minHeight: LayoutMetrics.bottomBarHeight)
+        .background(.bar)
+    }
+
+    private func pendingBotStartBanner(
+        _ pendingStart: PendingBotStartContext,
+        conversation: ConversationStore
+    ) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "play.circle.fill")
+                .font(.title3)
+                .foregroundStyle(Color.accentColor)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("启动机器人 @\(pendingStart.botUsername)")
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                Text("将携带链接参数：\(pendingStart.parameter)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Spacer()
+
+            Button {
+                Task { await conversation.sendBotStart() }
+            } label: {
+                Label("启动 (/start)", systemImage: "play.fill")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+
+            Button {
+                conversation.dismissPendingBotStart()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("忽略启动参数")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 9)
+        .background(.bar)
+    }
+
+    private func joinActiveChatBanner(conversation: ConversationStore) -> some View {
+        let isChannel = chat.kind.isChannel
+        let actionTitle = conversation.activeChatJoinRequiresRequest
+            ? "申请加入"
+            : (isChannel ? "加入频道" : "加入群组")
+
+        return HStack(spacing: 10) {
+            Image(systemName: isChannel ? "megaphone.fill" : "person.badge.plus")
+                .font(.body)
+                .foregroundStyle(Color.accentColor)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(isChannel ? "你尚未订阅此频道" : "你尚未加入此群组")
+                    .font(.callout.weight(.medium))
+                if conversation.activeChatJoinRequiresRequest {
+                    Text("提交申请后需等待管理员审批。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer()
+
+            Button {
+                Task { await conversation.joinActiveChat() }
+            } label: {
+                if conversation.isJoiningActiveChat {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("正在加入…")
+                    }
+                } else {
+                    Text(actionTitle)
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .disabled(conversation.isJoiningActiveChat)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 9)
         .background(.bar)
     }
 
@@ -802,6 +918,7 @@ struct ConversationView: View {
             guard lightboxSession == nil,
                   deleteRequest == nil,
                   forwardRequest == nil,
+                  appStore.pendingChatInvite == nil,
                   stickerPackSheet == nil,
                   appStore.conversation.pendingPasswordCallback == nil,
                   appStore.conversation.callbackAlert == nil,
@@ -879,15 +996,17 @@ struct ConversationView: View {
                         .frame(maxWidth: 360)
                 }
 
-                Button {
-                    Task { await conversation.sendBotStart() }
-                } label: {
-                    Label("开始使用 (/start)", systemImage: "play.fill")
-                        .padding(.horizontal, 8)
+                if conversation.pendingBotStart == nil {
+                    Button {
+                        Task { await conversation.sendBotStart() }
+                    } label: {
+                        Label("开始使用 (/start)", systemImage: "play.fill")
+                            .padding(.horizontal, 8)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
+                    .padding(.top, 4)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
-                .padding(.top, 4)
             }
             .padding(24)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))

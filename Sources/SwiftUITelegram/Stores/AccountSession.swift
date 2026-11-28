@@ -36,11 +36,14 @@ final class AccountSession: Identifiable {
     private(set) var unreadMessageCount: Int = 0
     private(set) var unreadChatCount: Int = 0
     var authErrorMessage: String?
+    var pendingChatInvite: PendingChatInvitePreview?
 
     var credentialsProvider: () -> TelegramAPICredentials? = { nil }
     var onAuthorized: ((AccountSession, UserSummary) async -> Void)?
     var onProfileUpdated: ((AccountSession) -> Void)?
     var onClosedForRemoval: ((AccountSession, Bool) -> Void)?
+    var onSearchRequested: (() -> Void)?
+    var onLinkNotice: ((String) -> Void)?
 
     init(
         profile: StoredAccountProfile,
@@ -67,6 +70,10 @@ final class AccountSession: Identifiable {
         self.chatList = ChatListStore(service: service)
         self.conversation = ConversationStore(service: service)
         self.stickers = StickerStore(service: service, storageKey: profile.storageKey)
+
+        self.conversation.onOpenTelegramURL = { [weak self] url in
+            await self?.openTelegramURL(url)
+        }
     }
 
     // MARK: - Display Metadata
@@ -303,6 +310,7 @@ final class AccountSession: Identifiable {
             unreadMessageCount = 0
             unreadChatCount = 0
             currentUser = nil
+            pendingChatInvite = nil
             chatList.reset()
             conversation.reset()
             stickers.reset()
@@ -376,6 +384,7 @@ final class AccountSession: Identifiable {
         updatesTask?.cancel()
         updatesTask = nil
         service.finishUpdates()
+        pendingChatInvite = nil
         chatList.reset()
         conversation.reset()
         stickers.reset()

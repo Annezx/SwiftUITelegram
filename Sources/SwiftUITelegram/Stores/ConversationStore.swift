@@ -47,6 +47,7 @@ final class ConversationStore {
     private var inFlightPermissionIds: Set<Int64> = []
     private var savedDraftBeforeEditing: String = ""
     private var scrollToMessageToken: Int = 0
+    private var pendingJumpMessageId: Int64?
 
     private(set) var activeChatId: Int64?
     private(set) var activeChatKind: ChatKind?
@@ -73,6 +74,11 @@ final class ConversationStore {
     private(set) var activeReplyKeyboard: ReplyKeyboardMarkup?
     private(set) var activeInputPlaceholder: String?
     private(set) var inFlightCallbackButtonKey: String?
+    private(set) var pendingBotStart: PendingBotStartContext?
+    private(set) var canJoinActiveChat: Bool = false
+    private(set) var activeChatJoinRequiresRequest: Bool = false
+    private(set) var isJoiningActiveChat: Bool = false
+    private(set) var isViewingHistoricalAnchor: Bool = false
 
     var draftText: String = ""
     var sendAsDocument: Bool = false
@@ -82,6 +88,8 @@ final class ConversationStore {
     var noticeMessage: String?
     var callbackAlert: BotCallbackAlert?
     var pendingPasswordCallback: BotCallbackPasswordRequest?
+
+    var onOpenTelegramURL: ((URL) async -> Void)?
 
     init(service: TDLibService) {
         self.service = service
@@ -122,13 +130,21 @@ final class ConversationStore {
         timelineEntries.filter { isEntrySelected($0) }.count
     }
 
-    func selectChat(_ chatId: Int64?) {
-        guard activeChatId != chatId else { return }
+    func selectChat(_ chatId: Int64?, jumpToMessageId: Int64? = nil) {
+        if activeChatId == chatId {
+            if let jumpToMessageId, jumpToMessageId != 0 {
+                Task {
+                    await jumpToMessage(id: jumpToMessageId)
+                }
+            }
+            return
+        }
 
         let previousChatId = activeChatId
         activeChatId = chatId
         activeChatKind = nil
         activeBotUserId = nil
+        pendingJumpMessageId = (jumpToMessageId ?? 0) != 0 ? jumpToMessageId : nil
         loadTask?.cancel()
         botContextTask?.cancel()
         highlightClearTask?.cancel()
@@ -154,6 +170,11 @@ final class ConversationStore {
         inFlightCallbackButtonKey = nil
         callbackAlert = nil
         pendingPasswordCallback = nil
+        pendingBotStart = nil
+        canJoinActiveChat = false
+        activeChatJoinRequiresRequest = false
+        isJoiningActiveChat = false
+        isViewingHistoricalAnchor = false
         clearPendingAttachments()
         errorMessage = nil
         noticeMessage = nil
@@ -175,6 +196,63 @@ final class ConversationStore {
         botContextTask = Task {
             await loadBotAndMarkupContext(for: chatId)
         }
+    }
+
+    func preparePendingBotStart(_ context: PendingBotStartContext) {
+        guard activeChatId == context.chatId else { return }
+        pendingBotStart = context
+        if activeBotUserId == nil {
+            activeBotUserId = context.botUserId
+        }
+    }
+
+    func dismissPendingBotStart() {
+        pendingBotStart = nil
+    }
+
+    func prefillDraftText(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        draftText = text
+        composerFocusTrigger += 1
+    }
+
+    func joinActiveChat() async {
+        guard let chatId = activeChatId, canJoinActiveChat, !isJoiningActiveChat else { return }
+        isJoiningActiveChat = true
+        errorMessage = nil
+        defer { isJoiningActiveChat = false }
+
+        do {
+            let result = try await service.joinChat(chatId: chatId)
+            guard activeChatId == chatId else { return }
+            switch result {
+            case .chatJoinResultSuccess:
+                canJoinActiveChat = false
+                let isChannel = activeChatKind?.isChannel == true
+                showTransientNotice(isChannel ? "已加入频道" : "已加入群组")
+            case .chatJoinResultRequestSent:
+                canJoinActiveChat = false
+                showTransientNotice("已提交加入申请，请等待管理员审批")
+            case .chatJoinResultGuardBotApprovalRequired:
+                showTransientNotice("该群组需要通过验证机器人完成入群验证")
+            case .chatJoinResultDeclined:
+                errorMessage = "加入群组被拒绝"
+            }
+        } catch {
+            if activeChatId == chatId {
+                errorMessage = TDLibErrorHelper.userFacingMessage(for: error)
+            }
+        }
+    }
+
+    func returnToLatestMessages() async {
+        guard let chatId = activeChatId else { return }
+        isViewingHistoricalAnchor = false
+        messages = []
+        hasMoreOlder = true
+        pendingJumpMessageId = nil
+        await loadInitialHistory(for: chatId)
     }
 
     func loadOlderMessages() async {
@@ -365,7 +443,7 @@ final class ConversationStore {
             return
         }
 
-        // Try loading up to 3 contiguous older pages so timeline pagination stays gap-free.
+        // Try loading up to 3 contiguous older pages so normal timeline pagination stays gap-free.
         for _ in 0..<3 {
             guard activeChatId == chatId, hasMoreOlder else { break }
             await loadOlderMessages()
@@ -375,7 +453,39 @@ final class ConversationStore {
             }
         }
 
-        showTransientNotice("原消息较早，可继续向上滚动历史记录查看。")
+        // For distant deep-linked messages, load a centered slice directly around the target message.
+        do {
+            let targetTdMessage = try? await service.getMessage(chatId: chatId, messageId: targetMessageId)
+            let aroundBatch = try await service.getChatHistory(
+                chatId: chatId,
+                fromMessageId: targetMessageId,
+                limit: 35,
+                offset: -15,
+                onlyLocal: false
+            )
+            guard activeChatId == chatId else { return }
+
+            var fetched: [MessageItem] = aroundBatch.map(MessageItem.init(tdMessage:))
+            if let targetTdMessage, !fetched.contains(where: { $0.id == targetTdMessage.id }) {
+                fetched.append(MessageItem(tdMessage: targetTdMessage))
+            }
+
+            if fetched.contains(where: { $0.id == targetMessageId }) {
+                let byId = Dictionary(fetched.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+                messages = byId.values.sorted(by: Self.chronologicalOrder)
+                hasMoreOlder = true
+                isViewingHistoricalAnchor = true
+                prefetchPermissions(for: messages)
+                if let entry = timelineEntries.first(where: { $0.contains(messageId: targetMessageId) }) {
+                    triggerScrollAndHighlight(entryId: entry.id)
+                    return
+                }
+            }
+        } catch {
+            // Fall through to gentle notice below.
+        }
+
+        showTransientNotice("原消息较早或已删除，可继续向上滚动历史记录查看。")
     }
 
     private func triggerScrollAndHighlight(entryId: Int64) {
@@ -901,15 +1011,19 @@ final class ConversationStore {
         composerFocusTrigger += 1
     }
 
-    func sendBotStart() async {
+    func sendBotStart(parameter: String? = nil, botUserIdOverride: Int64? = nil) async {
         guard let chatId = activeChatId else { return }
-        if let botUserId = activeBotUserId {
+        let effectiveParameter = parameter ?? pendingBotStart?.parameter ?? ""
+        let effectiveBotUserId = botUserIdOverride ?? pendingBotStart?.botUserId ?? activeBotUserId
+        pendingBotStart = nil
+
+        if let botUserId = effectiveBotUserId {
             errorMessage = nil
             do {
                 let sentMessage = try await service.sendBotStartMessage(
                     botUserId: botUserId,
                     chatId: chatId,
-                    parameter: ""
+                    parameter: effectiveParameter
                 )
                 guard activeChatId == chatId else { return }
                 let item = MessageItem(tdMessage: sentMessage)
@@ -921,7 +1035,8 @@ final class ConversationStore {
                 // Fall back to sending literal /start text below.
             }
         }
-        await sendImmediateText("/start")
+        let fallbackText = effectiveParameter.isEmpty ? "/start" : "/start \(effectiveParameter)"
+        await sendImmediateText(fallbackText)
     }
 
     func openBotMenuWebApp() async {
@@ -1176,8 +1291,14 @@ final class ConversationStore {
 
     private func openExternalURLString(_ rawURL: String) {
         let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let url = URL(string: trimmed) else {
+        guard !trimmed.isEmpty, let url = TelegramLinkDetector.normalizedURL(from: trimmed) else {
             showTransientNotice("无效链接地址")
+            return
+        }
+        if TelegramLinkDetector.isTelegramLink(url), let onOpenTelegramURL {
+            Task {
+                await onOpenTelegramURL(url)
+            }
             return
         }
         NSWorkspace.shared.open(url)
@@ -1190,6 +1311,9 @@ final class ConversationStore {
         case .updateNewMessage(let info):
             guard info.message.chatId == activeChatId else { return }
             let item = MessageItem(tdMessage: info.message)
+            if isViewingHistoricalAnchor && !item.isOutgoing {
+                return
+            }
             upsertMessage(item)
             prefetchPermissions(for: [item])
             if !item.isOutgoing {
@@ -1278,6 +1402,15 @@ final class ConversationStore {
                 applyGroupBotCommands(info.basicGroupFullInfo.botCommands)
             }
 
+        case .updateSupergroup(let info):
+            switch activeChatKind {
+            case .supergroup(let supergroupId) where supergroupId == info.supergroup.id,
+                 .channel(let supergroupId) where supergroupId == info.supergroup.id:
+                applySupergroupMembership(info.supergroup)
+            default:
+                break
+            }
+
         case .updateSupergroupFullInfo(let info):
             if case .supergroup(let supergroupId) = activeChatKind, supergroupId == info.supergroupId {
                 applyGroupBotCommands(info.supergroupFullInfo.botCommands)
@@ -1311,6 +1444,7 @@ final class ConversationStore {
         activeChatId = nil
         activeChatKind = nil
         activeBotUserId = nil
+        pendingJumpMessageId = nil
         messages = []
         draftText = ""
         savedDraftBeforeEditing = ""
@@ -1332,6 +1466,11 @@ final class ConversationStore {
         inFlightCallbackButtonKey = nil
         callbackAlert = nil
         pendingPasswordCallback = nil
+        pendingBotStart = nil
+        canJoinActiveChat = false
+        activeChatJoinRequiresRequest = false
+        isJoiningActiveChat = false
+        isViewingHistoricalAnchor = false
         clearPendingAttachments()
         errorMessage = nil
         noticeMessage = nil
@@ -1392,6 +1531,12 @@ final class ConversationStore {
             }
 
         case .supergroup(let supergroupId):
+            if let supergroup = try? await service.getSupergroup(supergroupId: supergroupId),
+               !Task.isCancelled,
+               activeChatId == chatId
+            {
+                applySupergroupMembership(supergroup)
+            }
             if let fullInfo = try? await service.getSupergroupFullInfo(supergroupId: supergroupId),
                !Task.isCancelled,
                activeChatId == chatId
@@ -1399,8 +1544,26 @@ final class ConversationStore {
                 applyGroupBotCommands(fullInfo.botCommands)
             }
 
-        case .channel, .secret:
+        case .channel(let supergroupId):
+            if let supergroup = try? await service.getSupergroup(supergroupId: supergroupId),
+               !Task.isCancelled,
+               activeChatId == chatId
+            {
+                applySupergroupMembership(supergroup)
+            }
+
+        case .secret:
             break
+        }
+    }
+
+    private func applySupergroupMembership(_ supergroup: Supergroup) {
+        if case .chatMemberStatusLeft = supergroup.status {
+            canJoinActiveChat = true
+            activeChatJoinRequiresRequest = supergroup.joinByRequest
+        } else {
+            canJoinActiveChat = false
+            activeChatJoinRequiresRequest = false
         }
     }
 
@@ -1685,10 +1848,17 @@ final class ConversationStore {
             let items = collected.map(MessageItem.init(tdMessage:))
             mergeMessages(items)
             prefetchPermissions(for: items)
-            scrollToBottomTrigger += 1
 
             let unreadIncomingIds = messages.suffix(20).filter { !$0.isOutgoing }.map(\.id)
             markAsRead(chatId: chatId, messageIds: unreadIncomingIds)
+
+            if let targetId = pendingJumpMessageId {
+                pendingJumpMessageId = nil
+                isLoadingInitial = false
+                await jumpToMessage(id: targetId)
+            } else {
+                scrollToBottomTrigger += 1
+            }
         } catch {
             guard !Task.isCancelled else { return }
             errorMessage = TDLibErrorHelper.userFacingMessage(for: error)

@@ -49,6 +49,7 @@ enum FormattedTextBlock: Identifiable, Equatable {
 
 enum FormattedTextAction: Equatable {
     case openExternalURL(URL)
+    case openTelegramLink(URL)
     case openMention(username: String)
     case openUser(userId: Int64)
     case revealSpoilers
@@ -417,6 +418,10 @@ enum FormattedTextParser {
             default:
                 break
             }
+        }
+
+        if TelegramLinkDetector.isTelegramLink(url) {
+            return .openTelegramLink(url)
         }
 
         return .openExternalURL(url)

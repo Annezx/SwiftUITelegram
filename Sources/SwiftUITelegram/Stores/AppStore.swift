@@ -77,6 +77,11 @@ final class AppStore {
         set { activeAccount.authErrorMessage = newValue }
     }
 
+    var pendingChatInvite: PendingChatInvitePreview? {
+        get { activeAccount.pendingChatInvite }
+        set { activeAccount.pendingChatInvite = newValue }
+    }
+
     // MARK: - Multi-Account Queries
 
     var readyAccounts: [AccountSession] {
@@ -297,6 +302,16 @@ final class AppStore {
         manageFoldersTrigger += 1
     }
 
+    // MARK: - In-App Telegram Links
+
+    func openTelegramURL(_ url: URL) async {
+        await activeAccount.openTelegramURL(url)
+    }
+
+    func confirmJoinPendingInvite() async -> String? {
+        await activeAccount.confirmJoinPendingInvite()
+    }
+
     // MARK: - Private Session Coordination
 
     private func wireCallbacks(for session: AccountSession) {
@@ -314,6 +329,16 @@ final class AppStore {
 
         session.onClosedForRemoval = { [weak self] closedSession, deleteStorage in
             self?.handleSessionClosedForRemoval(closedSession, deleteStorage: deleteStorage)
+        }
+
+        session.onSearchRequested = { [weak self, weak session] in
+            guard let self, let session, session.id == self.activeAccountId else { return }
+            self.triggerSearchFocus()
+        }
+
+        session.onLinkNotice = { [weak self, weak session] message in
+            guard let self, let session, session.id == self.activeAccountId else { return }
+            self.noticeMessage = message
         }
     }
 

@@ -290,6 +290,27 @@ final class ChatListStore {
         return nil
     }
 
+    @discardableResult
+    func cacheAndSelectChat(_ tdChat: Chat) -> ChatSummary {
+        let summary = ChatSummary(tdChat: tdChat)
+        chatsById[summary.id] = summary
+        selectedChatId = summary.id
+        return summary
+    }
+
+    @discardableResult
+    func openChat(byId chatId: Int64) async -> ChatSummary? {
+        guard chatId != 0 else { return nil }
+        if let existing = chatsById[chatId] {
+            selectedChatId = existing.id
+            return existing
+        }
+        if let tdChat = try? await service.getChat(chatId: chatId) {
+            return cacheAndSelectChat(tdChat)
+        }
+        return nil
+    }
+
     func openChatByUsername(_ username: String) async -> String? {
         let cleaned = username.trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: "@"))
@@ -297,9 +318,7 @@ final class ChatListStore {
 
         do {
             let tdChat = try await service.searchPublicChat(username: cleaned)
-            let summary = ChatSummary(tdChat: tdChat)
-            chatsById[summary.id] = summary
-            selectedChatId = summary.id
+            cacheAndSelectChat(tdChat)
             return nil
         } catch {
             return TDLibErrorHelper.userFacingMessage(for: error) ?? "无法打开 @\(cleaned)"
@@ -309,9 +328,7 @@ final class ChatListStore {
     func openPrivateChat(userId: Int64) async -> String? {
         do {
             let tdChat = try await service.createPrivateChat(userId: userId, force: false)
-            let summary = ChatSummary(tdChat: tdChat)
-            chatsById[summary.id] = summary
-            selectedChatId = summary.id
+            cacheAndSelectChat(tdChat)
             return nil
         } catch {
             return TDLibErrorHelper.userFacingMessage(for: error) ?? "无法打开该用户的对话"
