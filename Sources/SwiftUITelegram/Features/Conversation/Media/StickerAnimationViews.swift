@@ -374,6 +374,7 @@ struct WebMWebViewFallback: NSViewRepresentable {
         private var loadedPath: String?
         private var lastPlaying: Bool = true
 
+        @MainActor
         func loadIfNeeded(localPath: String, into webView: WKWebView, isPlaying: Bool) {
             if loadedPath != localPath {
                 loadedPath = localPath
